@@ -833,6 +833,7 @@ if (isReplica) {
   const masterSocket = net.createConnection(masterPort, masterHost);
   let handshakeStep = 0;
   let handshakeComplete = false;
+  let replicationOffset = 0;
 
   masterSocket.on('data', (buffer: Buffer) => {
     const input = buffer.toString();
@@ -861,45 +862,76 @@ if (isReplica) {
 
       // Skip RDB file data if present (starts with $)
       if (remaining.startsWith("$")) {
-        const lines = remaining.split("\r\n");
-
-        if (lines.length >= 2) {
-          const rdbLength = parseInt(lines[0].substring(1), 10);
-          // Skip RDB header and data
-          const rdbData = lines[1];
-
-          if (rdbData.length >= rdbLength) {
-            remaining = rdbData.substring(rdbLength);
+        console.log("Found RDB data, parsing...");
+        const rdbLengthMatch = remaining.match(/^\$(\d+)\r\n/);
+        if (rdbLengthMatch) {
+          const rdbLength = parseInt(rdbLengthMatch[1], 10);
+          const headerLength = rdbLengthMatch[0].length;
+          console.log(`RDB length: ${rdbLength}, header length: ${headerLength}`);
+          remaining = remaining.substring(headerLength + rdbLength);
+          if (!remaining.startsWith("*") && remaining.startsWith("3")) {
+            remaining = "*" + remaining;
           }
+          console.log("After RDB skip, remaining:", JSON.stringify(remaining));
         }
       }
 
       while (remaining.startsWith("*")) {
         const lines = remaining.split("\r\n");
-
         console.log("Processing lines:", lines.slice(0, 8));
 
-        if (lines.length >= 6 && lines[1] === "$8" && lines[2].toLowerCase() === "replconf" && lines[4].toLowerCase() === "getack") {
-          // Respond to REPLCONF GETACK with REPLCONF ACK 0
-          masterSocket.write("*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n");
+        // Find the end of the current command by parsing RESP format
+        let commandEnd = 0;
+        let pos = 0;
+        
+        // Parse *N
+        const arrayMatch = remaining.match(/^\*(\d+)\r\n/);
+        if (!arrayMatch) break;
+        
+        const numArgs = parseInt(arrayMatch[1], 10);
+        pos += arrayMatch[0].length;
+        
+        // Parse each argument
+        for (let i = 0; i < numArgs; i++) {
+          // Parse $len
+          const lengthMatch = remaining.substring(pos).match(/^\$(\d+)\r\n/);
+          if (!lengthMatch) break;
+          
+          const argLength = parseInt(lengthMatch[1], 10);
+          pos += lengthMatch[0].length;
+          
+          // Skip the argument content + \r\n
+          pos += argLength + 2;
+        }
+        
+        commandEnd = pos;
+        const currentCommand = remaining.substring(0, commandEnd);
 
-          remaining = lines.slice(6).join("\r\n");
+        if (lines.length >= 6 && lines[1] === "$8" && lines[2].toLowerCase() === "replconf" && lines[4].toLowerCase() === "getack") {
+          // Respond to REPLCONF GETACK with current offset, then add this command to offset
+          masterSocket.write(`*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$${replicationOffset.toString().length}\r\n${replicationOffset}\r\n`);
+          console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
+          replicationOffset += currentCommand.length;
+          remaining = remaining.substring(commandEnd);
         } else if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
           const key = lines[4];
           const value = lines[6];
-
           console.log(`Setting ${key} = ${value}`);
-
           store.set(key, { value });
-
-          // Remove processed command (7 lines: *3, $3, SET, $3, key, $3, value)
-          remaining = lines.slice(7).join("\r\n");
-          console.log("Remaining:", JSON.stringify(remaining));
+          console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
+          replicationOffset += currentCommand.length;
+          remaining = remaining.substring(commandEnd);
+        } else if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "PING") {
+          // Process PING silently and track offset
+          console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
+          replicationOffset += currentCommand.length;
+          remaining = remaining.substring(commandEnd);
         } else {
           console.log("Breaking - no more commands");
           break;
         }
       }
+
       console.log("Store contents:", Array.from(store.entries()));
     }
   });
