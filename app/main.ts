@@ -801,6 +801,19 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         // Key doesn't exist
         return connection.write("+none\r\n");
       }
+
+      if (lines.length >= 6 && lines[1] === "$4" && lines[2] === "WAIT") {
+        const numReplicas = parseInt(lines[4], 10);
+        const timeout = parseInt(lines[6], 10);
+
+        // For now, handle simple case: 0 replicas requested, 0 replicas connected
+        if (numReplicas === 0) {
+          return connection.write(":0\r\n");
+        }
+
+        // Return current number of connected replicas
+        return connection.write(`:${replicas.size}\r\n`);
+      }
     }
 
     connection.write(buffer.toString());
@@ -863,47 +876,60 @@ if (isReplica) {
       // Skip RDB file data if present (starts with $)
       if (remaining.startsWith("$")) {
         console.log("Found RDB data, parsing...");
+
         const rdbLengthMatch = remaining.match(/^\$(\d+)\r\n/);
+
         if (rdbLengthMatch) {
           const rdbLength = parseInt(rdbLengthMatch[1], 10);
           const headerLength = rdbLengthMatch[0].length;
+
           console.log(`RDB length: ${rdbLength}, header length: ${headerLength}`);
+
           remaining = remaining.substring(headerLength + rdbLength);
+
           if (!remaining.startsWith("*") && remaining.startsWith("3")) {
             remaining = "*" + remaining;
           }
+
           console.log("After RDB skip, remaining:", JSON.stringify(remaining));
         }
       }
 
       while (remaining.startsWith("*")) {
         const lines = remaining.split("\r\n");
+
         console.log("Processing lines:", lines.slice(0, 8));
 
+        // Parse *N
+        const arrayMatch = remaining.match(/^\*(\d+)\r\n/);
         // Find the end of the current command by parsing RESP format
         let commandEnd = 0;
         let pos = 0;
-        
-        // Parse *N
-        const arrayMatch = remaining.match(/^\*(\d+)\r\n/);
-        if (!arrayMatch) break;
-        
+
+        if (!arrayMatch) {
+          break;
+        }
+
         const numArgs = parseInt(arrayMatch[1], 10);
+
         pos += arrayMatch[0].length;
-        
+
         // Parse each argument
         for (let i = 0; i < numArgs; i++) {
           // Parse $len
           const lengthMatch = remaining.substring(pos).match(/^\$(\d+)\r\n/);
-          if (!lengthMatch) break;
-          
+
+          if (!lengthMatch) {
+            break;
+          }
+
           const argLength = parseInt(lengthMatch[1], 10);
+
           pos += lengthMatch[0].length;
-          
           // Skip the argument content + \r\n
           pos += argLength + 2;
         }
-        
+
         commandEnd = pos;
         const currentCommand = remaining.substring(0, commandEnd);
 
@@ -911,23 +937,28 @@ if (isReplica) {
           // Respond to REPLCONF GETACK with current offset, then add this command to offset
           masterSocket.write(`*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$${replicationOffset.toString().length}\r\n${replicationOffset}\r\n`);
           console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
+
           replicationOffset += currentCommand.length;
           remaining = remaining.substring(commandEnd);
         } else if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
           const key = lines[4];
           const value = lines[6];
+
           console.log(`Setting ${key} = ${value}`);
           store.set(key, { value });
           console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
+
           replicationOffset += currentCommand.length;
           remaining = remaining.substring(commandEnd);
         } else if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "PING") {
           // Process PING silently and track offset
           console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
+
           replicationOffset += currentCommand.length;
           remaining = remaining.substring(commandEnd);
         } else {
           console.log("Breaking - no more commands");
+
           break;
         }
       }
