@@ -11,6 +11,8 @@ const blockedXReadClients = new Map<string, { socket: net.Socket; startId: strin
 const transactions = new Map<net.Socket, boolean>();
 const queuedCommands = new Map<net.Socket, string[]>();
 const replicas = new Set<net.Socket>();
+const waitingClients = new Map<net.Socket, { numReplicas: number; timeout: NodeJS.Timeout; ackCount: number; targetOffset: number }>();
+let masterReplicationOffset = 0;
 
 // Function to execute a single command and return its response
 function executeCommand(commandInput: string): string {
@@ -117,6 +119,8 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           for (const replica of replicas) {
             replica.write(input);
           }
+
+          masterReplicationOffset += input.length;
         }
 
         return connection.write("+OK\r\n");
@@ -689,6 +693,8 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             for (const replica of replicas) {
               replica.write(input);
             }
+
+            masterReplicationOffset += input.length;
           }
 
           return connection.write(`:${newValue}\r\n`);
@@ -701,6 +707,8 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             for (const replica of replicas) {
               replica.write(input);
             }
+
+            masterReplicationOffset += input.length;
           }
 
           return connection.write(":1\r\n");
@@ -747,6 +755,25 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       }
 
       if (lines.length >= 6 && lines[1] === "$8" && lines[2] === "REPLCONF") {
+        if (lines.length >= 6 && lines[4] === "ACK") {
+          const offset = parseInt(lines[6], 10);
+
+          // Check if this ACK is for a waiting client
+          for (const [client, waitInfo] of waitingClients) {
+            if (offset >= waitInfo.targetOffset) {
+              waitInfo.ackCount++;
+
+              if (waitInfo.ackCount >= waitInfo.numReplicas) {
+                clearTimeout(waitInfo.timeout);
+                client.write(`:${waitInfo.ackCount}\r\n`);
+                waitingClients.delete(client);
+              }
+            }
+          }
+          // Don't send response to ACK commands from replicas
+          return;
+        }
+
         return connection.write("+OK\r\n");
       }
 
@@ -804,15 +831,44 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 6 && lines[1] === "$4" && lines[2] === "WAIT") {
         const numReplicas = parseInt(lines[4], 10);
-        const timeout = parseInt(lines[6], 10);
+        const timeoutMs = parseInt(lines[6], 10);
 
-        // For now, handle simple case: 0 replicas requested, 0 replicas connected
         if (numReplicas === 0) {
           return connection.write(":0\r\n");
         }
 
-        // Return current number of connected replicas
-        return connection.write(`:${replicas.size}\r\n`);
+        if (replicas.size === 0) {
+          return connection.write(":0\r\n");
+        }
+
+        // If no write commands have been sent, all replicas are in sync
+        if (masterReplicationOffset === 0) {
+          return connection.write(`:${replicas.size}\r\n`);
+        }
+
+        // Send GETACK to all replicas
+        for (const replica of replicas) {
+          replica.write("*3\r\n$8\r\nREPLCONF\r\n$6\r\nGETACK\r\n$1\r\n*\r\n");
+        }
+
+        // Set up timeout and wait for ACKs
+        const timeoutHandle = setTimeout(() => {
+          const waitInfo = waitingClients.get(connection);
+
+          if (waitInfo) {
+            connection.write(`:${waitInfo.ackCount}\r\n`);
+            waitingClients.delete(connection);
+          }
+        }, timeoutMs);
+
+        waitingClients.set(connection, {
+          numReplicas,
+          timeout: timeoutHandle,
+          ackCount: 0,
+          targetOffset: masterReplicationOffset
+        });
+
+        return; // Don't send response yet, wait for ACKs
       }
     }
 
