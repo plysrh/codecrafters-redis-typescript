@@ -870,28 +870,46 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return; // Don't send response yet, wait for ACKs
       }
+
+      if (lines.length >= 4 && lines[1] === "$6" && lines[2] === "CONFIG" && lines[4] === "GET") {
+        const param = lines[6];
+        let value = '';
+        
+        if (param === 'dir') {
+          value = dir;
+        } else if (param === 'dbfilename') {
+          value = dbfilename;
+        }
+        
+        return connection.write(`*2\r\n$${param.length}\r\n${param}\r\n$${value.length}\r\n${value}\r\n`);
+      }
     }
 
     connection.write(buffer.toString());
   });
 });
 
-// Parse command line arguments for port and replicaof
+// Parse command line arguments
 const args = process.argv.slice(2);
 let port = 6379; // default port
 let isReplica = false;
 let masterHost = '';
 let masterPort = 0;
+let dir = '/tmp/redis-files';
+let dbfilename = 'dump.rdb';
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--port' && i + 1 < args.length) {
     port = parseInt(args[i + 1], 10);
   } else if (args[i] === '--replicaof' && i + 1 < args.length) {
     const masterInfo = args[i + 1].split(' ');
-
     isReplica = true;
     masterHost = masterInfo[0];
     masterPort = parseInt(masterInfo[1], 10);
+  } else if (args[i] === '--dir' && i + 1 < args.length) {
+    dir = args[i + 1];
+  } else if (args[i] === '--dbfilename' && i + 1 < args.length) {
+    dbfilename = args[i + 1];
   }
 }
 
