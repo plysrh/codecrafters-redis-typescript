@@ -1,4 +1,6 @@
 import * as net from "net";
+import * as fs from "fs";
+import * as path from "path";
 
 // You can use print statements as follows for debugging, they'll be visible when running tests.
 console.log("Logs from your program will appear here!");
@@ -874,14 +876,26 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       if (lines.length >= 4 && lines[1] === "$6" && lines[2] === "CONFIG" && lines[4] === "GET") {
         const param = lines[6];
         let value = '';
-        
+
         if (param === 'dir') {
           value = dir;
         } else if (param === 'dbfilename') {
           value = dbfilename;
         }
-        
+
         return connection.write(`*2\r\n$${param.length}\r\n${param}\r\n$${value.length}\r\n${value}\r\n`);
+      }
+
+      if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "KEYS") {
+        const pattern = lines[4];
+        if (pattern === "*") {
+          const keys = Array.from(store.keys());
+          let response = `*${keys.length}\r\n`;
+          for (const key of keys) {
+            response += `$${key.length}\r\n${key}\r\n`;
+          }
+          return connection.write(response);
+        }
       }
     }
 
@@ -913,6 +927,133 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
+// Load RDB file on startup
+function loadRDBFile() {
+  const rdbPath = path.join(dir, dbfilename);
+
+  if (!fs.existsSync(rdbPath)) {
+    return;
+  }
+
+  const data = fs.readFileSync(rdbPath);
+  let pos = 0;
+
+  // Skip header (REDIS0011)
+  pos += 9;
+
+  while (pos < data.length) {
+    const byte = data[pos];
+
+    if (byte === 0xFF) {
+      // End of file
+      break;
+    } else if (byte === 0xFA) {
+      // Metadata section - skip
+      pos++;
+
+      const [nameLen, namePos] = readLength(data, pos);
+      pos = namePos + nameLen;
+      const [valueLen, valuePos] = readLength(data, pos);
+      pos = valuePos + valueLen;
+    } else if (byte === 0xFE) {
+      // Database section
+      pos++;
+
+      const [dbIndex, dbPos] = readLength(data, pos);
+      pos = dbPos;
+
+      if (pos < data.length && data[pos] === 0xFB) {
+        // Hash table size info
+        pos++;
+        const [hashTableSize, hashPos] = readLength(data, pos);
+        pos = hashPos;
+        const [expireHashSize, expirePos] = readLength(data, pos);
+        pos = expirePos;
+      }
+
+      // Read key-value pairs
+      while (pos < data.length && data[pos] !== 0xFE && data[pos] !== 0xFF) {
+        let expiry: number | undefined;
+
+        // Check for expiry
+        if (data[pos] === 0xFC) {
+          // Milliseconds
+          pos++;
+          expiry = Number(data.readBigUInt64LE(pos));
+          pos += 8;
+        } else if (data[pos] === 0xFD) {
+          // Seconds
+          pos++;
+          expiry = data.readUInt32LE(pos) * 1000;
+          pos += 4;
+        }
+
+        // Value type
+        const valueType = data[pos];
+        pos++;
+
+        // Key
+        const [key, keyPos] = readString(data, pos);
+        pos = keyPos;
+
+        // Value
+        const [value, valuePos] = readString(data, pos);
+        pos = valuePos;
+
+        store.set(key, { value, expiry: expiry ? Number(expiry) : undefined });
+      }
+    } else {
+      pos++;
+    }
+  }
+}
+
+function readLength(data: Buffer, pos: number): [number, number] {
+  const firstByte = data[pos];
+  const type = (firstByte & 0xC0) >> 6;
+
+  if (type === 0) {
+    return [firstByte & 0x3F, pos + 1];
+  } else if (type === 1) {
+    const length = ((firstByte & 0x3F) << 8) | data[pos + 1];
+
+    return [length, pos + 2];
+  } else if (type === 2) {
+    const length = data.readUInt32BE(pos + 1);
+
+    return [length, pos + 5];
+  } else {
+    // Special encoding
+    return [firstByte & 0x3F, pos + 1];
+  }
+}
+
+function readString(data: Buffer, pos: number): [string, number] {
+  const [length, newPos] = readLength(data, pos);
+  const firstByte = data[pos];
+
+  if ((firstByte & 0xC0) === 0xC0) {
+    // Special string encoding
+    const encoding = firstByte & 0x3F;
+
+    if (encoding === 0) {
+      // 8-bit integer
+      return [data[newPos].toString(), newPos + 1];
+    } else if (encoding === 1) {
+      // 16-bit integer
+      return [data.readUInt16LE(newPos).toString(), newPos + 2];
+    } else if (encoding === 2) {
+      // 32-bit integer
+      return [data.readUInt32LE(newPos).toString(), newPos + 4];
+    }
+  }
+
+  const str = data.subarray(newPos, newPos + length).toString();
+
+  return [str, newPos + length];
+}
+
+loadRDBFile();
 server.listen(port, "127.0.0.1");
 
 // If replica, connect to master and start handshake
