@@ -15,6 +15,7 @@ const queuedCommands = new Map<net.Socket, string[]>();
 const replicas = new Set<net.Socket>();
 const waitingClients = new Map<net.Socket, { numReplicas: number; timeout: NodeJS.Timeout; ackCount: number; targetOffset: number }>();
 let masterReplicationOffset = 0;
+const subscribers = new Map<net.Socket, Set<string>>();
 
 // Function to execute a single command and return its response
 function executeCommand(commandInput: string): string {
@@ -70,6 +71,7 @@ function executeCommand(commandInput: string): string {
 const server: net.Server = net.createServer((connection: net.Socket) => {
   connection.on("close", () => {
     replicas.delete(connection);
+    subscribers.delete(connection);
   });
 
   connection.on("data", (buffer: Buffer) => {
@@ -888,14 +890,31 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "KEYS") {
         const pattern = lines[4];
+
         if (pattern === "*") {
           const keys = Array.from(store.keys());
           let response = `*${keys.length}\r\n`;
+
           for (const key of keys) {
             response += `$${key.length}\r\n${key}\r\n`;
           }
+
           return connection.write(response);
         }
+      }
+
+      if (lines.length >= 4 && lines[1] === "$9" && lines[2] === "SUBSCRIBE") {
+        const channel = lines[4];
+
+        if (!subscribers.has(connection)) {
+          subscribers.set(connection, new Set());
+        }
+
+        subscribers.get(connection)!.add(channel);
+
+        const subscriptionCount = subscribers.get(connection)!.size;
+
+        return connection.write(`*3\r\n$9\r\nsubscribe\r\n$${channel.length}\r\n${channel}\r\n:${subscriptionCount}\r\n`);
       }
     }
 
