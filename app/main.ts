@@ -3,7 +3,7 @@ import * as net from "net";
 // You can use print statements as follows for debugging, they'll be visible when running tests.
 console.log("Logs from your program will appear here!");
 
-const store = new Map<string, string>();
+const store = new Map<string, { value: string; expiry?: number }>();
 
 // Uncomment this block to pass the first stage
 const server: net.Server = net.createServer((connection: net.Socket) => {
@@ -24,16 +24,24 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
         const key = lines[4];
         const value = lines[6];
-        store.set(key, value);
+        let expiry: number | undefined;
+        
+        // Check for PX option
+        if (lines.length >= 10 && lines[7] === "$2" && lines[8] === "PX") {
+          const ms = parseInt(lines[10]);
+          expiry = Date.now() + ms;
+        }
+        
+        store.set(key, { value, expiry });
         return connection.write("+OK\r\n");
       }
       if (lines.length >= 4 && lines[1] === "$3" && lines[2] === "GET") {
         const key = lines[4];
-        const value = store.get(key);
-        if (value === undefined) {
+        const entry = store.get(key);
+        if (!entry || (entry.expiry && Date.now() > entry.expiry)) {
           return connection.write("$-1\r\n");
         }
-        const response = `$${value.length}\r\n${value}\r\n`;
+        const response = `$${entry.value.length}\r\n${entry.value}\r\n`;
         return connection.write(response);
       }
     }
