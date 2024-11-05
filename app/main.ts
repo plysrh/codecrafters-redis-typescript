@@ -13,35 +13,44 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
     // Parse RESP array format
     if (input.startsWith("*")) {
       const lines = input.split("\r\n");
+
       if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "PING") {
         return connection.write("+PONG\r\n");
       }
+
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "ECHO") {
         const argument = lines[4];
         const response = `$${argument.length}\r\n${argument}\r\n`;
+
         return connection.write(response);
       }
+
       if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
         const key = lines[4];
         const value = lines[6];
         let expiry: number | undefined;
-        
+
         // Check for PX option
         if (lines.length >= 10 && lines[7] === "$2" && lines[8] === "PX") {
           const ms = parseInt(lines[10]);
+
           expiry = Date.now() + ms;
         }
-        
+
         store.set(key, { value, expiry });
+
         return connection.write("+OK\r\n");
       }
       if (lines.length >= 4 && lines[1] === "$3" && lines[2] === "GET") {
         const key = lines[4];
         const entry = store.get(key);
+
         if (!entry || (entry.expiry && Date.now() > entry.expiry)) {
           return connection.write("$-1\r\n");
         }
+
         const response = `$${entry.value.length}\r\n${entry.value}\r\n`;
+
         return connection.write(response);
       }
     }
