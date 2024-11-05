@@ -1121,12 +1121,15 @@ if (isReplica) {
 
           remaining = remaining.substring(headerLength + rdbLength);
 
-          if (!remaining.startsWith("*") && remaining.startsWith("3")) {
-            remaining = "*" + remaining;
-          }
-
           console.log("After RDB skip, remaining:", JSON.stringify(remaining));
         }
+      }
+
+      // If no commands to process, return
+      if (!remaining.startsWith("*")) {
+        console.log("No commands to process");
+
+        return;
       }
 
       while (remaining.startsWith("*")) {
@@ -1136,21 +1139,16 @@ if (isReplica) {
 
         // Parse *N
         const arrayMatch = remaining.match(/^\*(\d+)\r\n/);
-        // Find the end of the current command by parsing RESP format
-        let commandEnd = 0;
-        let pos = 0;
 
         if (!arrayMatch) {
           break;
         }
 
         const numArgs = parseInt(arrayMatch[1], 10);
+        let pos = arrayMatch[0].length;
 
-        pos += arrayMatch[0].length;
-
-        // Parse each argument
+        // Parse each argument to find command end
         for (let i = 0; i < numArgs; i++) {
-          // Parse $len
           const lengthMatch = remaining.substring(pos).match(/^\$(\d+)\r\n/);
 
           if (!lengthMatch) {
@@ -1158,22 +1156,17 @@ if (isReplica) {
           }
 
           const argLength = parseInt(lengthMatch[1], 10);
-
-          pos += lengthMatch[0].length;
-          // Skip the argument content + \r\n
-          pos += argLength + 2;
+          pos += lengthMatch[0].length + argLength + 2;
         }
 
-        commandEnd = pos;
-        const currentCommand = remaining.substring(0, commandEnd);
+        const currentCommand = remaining.substring(0, pos);
 
-        if (lines.length >= 6 && lines[1] === "$8" && lines[2].toLowerCase() === "replconf" && lines[4].toLowerCase() === "getack") {
+        if (lines.length >= 6 && lines[1] === "$8" && lines[2] === "REPLCONF" && lines[4] === "GETACK") {
           // Respond to REPLCONF GETACK with current offset, then add this command to offset
           masterSocket.write(`*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$${replicationOffset.toString().length}\r\n${replicationOffset}\r\n`);
           console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
 
           replicationOffset += currentCommand.length;
-          remaining = remaining.substring(commandEnd);
         } else if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
           const key = lines[4];
           const value = lines[6];
@@ -1181,20 +1174,16 @@ if (isReplica) {
           console.log(`Setting ${key} = ${value}`);
           store.set(key, { value });
           console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
-
           replicationOffset += currentCommand.length;
-          remaining = remaining.substring(commandEnd);
         } else if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "PING") {
-          // Process PING silently and track offset
           console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
 
           replicationOffset += currentCommand.length;
-          remaining = remaining.substring(commandEnd);
         } else {
-          console.log("Breaking - no more commands");
-
           break;
         }
+
+        remaining = remaining.substring(pos);
       }
 
       console.log("Store contents:", Array.from(store.entries()));
