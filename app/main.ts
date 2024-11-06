@@ -14,9 +14,9 @@ const transactions = new Map<net.Socket, boolean>();
 const queuedCommands = new Map<net.Socket, string[]>();
 const replicas = new Set<net.Socket>();
 const waitingClients = new Map<net.Socket, { numReplicas: number; timeout: NodeJS.Timeout; ackCount: number; targetOffset: number }>();
-let masterReplicationOffset = 0;
 const subscribers = new Map<net.Socket, Set<string>>();
 const subscribedMode = new Set<net.Socket>();
+let masterReplicationOffset = 0;
 
 // Function to execute a single command and return its response
 function executeCommand(commandInput: string): string {
@@ -87,7 +87,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       if (subscribedMode.has(connection) && lines.length >= 3) {
         const command = lines[2].toUpperCase();
         const allowedCommands = ['SUBSCRIBE', 'UNSUBSCRIBE', 'PSUBSCRIBE', 'PUNSUBSCRIBE', 'PING', 'QUIT'];
-        
+
         if (!allowedCommands.includes(command)) {
           return connection.write(`-ERR Can't execute '${command.toLowerCase()}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n`);
         }
@@ -107,6 +107,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       }
 
       if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "PING") {
+        if (subscribedMode.has(connection)) {
+          return connection.write("*2\r\n$4\r\npong\r\n$0\r\n\r\n");
+        }
+
         return connection.write("+PONG\r\n");
       }
 
