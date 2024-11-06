@@ -4,6 +4,7 @@ import * as net from "net";
 console.log("Logs from your program will appear here!");
 
 const store = new Map<string, { value: string; expiry?: number }>();
+const lists = new Map<string, string[]>();
 
 // Uncomment this block to pass the first stage
 const server: net.Server = net.createServer((connection: net.Socket) => {
@@ -52,6 +53,20 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const response = `$${entry.value.length}\r\n${entry.value}\r\n`;
 
         return connection.write(response);
+      }
+
+      if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "RPUSH") {
+        const key = lines[4];
+        const element = lines[6];
+        
+        if (!lists.has(key)) {
+          lists.set(key, []);
+        }
+        
+        const list = lists.get(key)!;
+        list.push(element);
+        
+        return connection.write(`:${list.length}\r\n`);
       }
     }
 
