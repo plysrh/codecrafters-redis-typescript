@@ -16,6 +16,7 @@ const replicas = new Set<net.Socket>();
 const waitingClients = new Map<net.Socket, { numReplicas: number; timeout: NodeJS.Timeout; ackCount: number; targetOffset: number }>();
 let masterReplicationOffset = 0;
 const subscribers = new Map<net.Socket, Set<string>>();
+const subscribedMode = new Set<net.Socket>();
 
 // Function to execute a single command and return its response
 function executeCommand(commandInput: string): string {
@@ -72,6 +73,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
   connection.on("close", () => {
     replicas.delete(connection);
     subscribers.delete(connection);
+    subscribedMode.delete(connection);
   });
 
   connection.on("data", (buffer: Buffer) => {
@@ -80,6 +82,16 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
     // Parse RESP array format
     if (input.startsWith("*")) {
       const lines = input.split("\r\n");
+
+      // Check if client is in subscribed mode and validate commands
+      if (subscribedMode.has(connection) && lines.length >= 3) {
+        const command = lines[2].toUpperCase();
+        const allowedCommands = ['SUBSCRIBE', 'UNSUBSCRIBE', 'PSUBSCRIBE', 'PUNSUBSCRIBE', 'PING', 'QUIT'];
+        
+        if (!allowedCommands.includes(command)) {
+          return connection.write(`-ERR Can't execute '${command.toLowerCase()}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n`);
+        }
+      }
 
       // Check if connection is in transaction and queue commands (except MULTI, EXEC, and DISCARD)
       if (transactions.has(connection)) {
@@ -911,6 +923,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         subscribers.get(connection)!.add(channel);
+        subscribedMode.add(connection);
 
         const subscriptionCount = subscribers.get(connection)!.size;
 
