@@ -42,6 +42,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write("+OK\r\n");
       }
+
       if (lines.length >= 4 && lines[1] === "$3" && lines[2] === "GET") {
         const key = lines[4];
         const entry = store.get(key);
@@ -57,15 +58,20 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "RPUSH") {
         const key = lines[4];
-        const element = lines[6];
-        
+
         if (!lists.has(key)) {
           lists.set(key, []);
         }
-        
+
         const list = lists.get(key)!;
-        list.push(element);
-        
+
+        // Extract all elements (skip RPUSH and key, then get every other line starting from index 6)
+        for (let i = 6; i < lines.length - 1; i += 2) {
+          if (lines[i]) {
+            list.push(lines[i]);
+          }
+        }
+
         return connection.write(`:${list.length}\r\n`);
       }
     }
