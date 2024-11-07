@@ -21,9 +21,8 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "ECHO") {
         const argument = lines[4];
-        const response = `$${argument.length}\r\n${argument}\r\n`;
 
-        return connection.write(response);
+        return connection.write(`$${argument.length}\r\n${argument}\r\n`);
       }
 
       if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
@@ -51,9 +50,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           return connection.write("$-1\r\n");
         }
 
-        const response = `$${entry.value.length}\r\n${entry.value}\r\n`;
-
-        return connection.write(response);
+        return connection.write(`$${entry.value.length}\r\n${entry.value}\r\n`);
       }
 
       if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "RPUSH") {
@@ -77,11 +74,25 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "LRANGE") {
         const key = lines[4];
-        const start = parseInt(lines[6]);
-        const stop = parseInt(lines[8]);
+        let start = parseInt(lines[6], 10);
+        let stop = parseInt(lines[8], 10);
+
         const list = lists.get(key);
 
-        if (!list || start >= list.length || start > stop) {
+        if (!list) {
+          return connection.write("*0\r\n");
+        }
+
+        // Handle negative indexes
+        if (start < 0) {
+          start = Math.max(0, list.length + start);
+        }
+
+        if (stop < 0) {
+          stop = list.length + stop;
+        }
+
+        if (start >= list.length || start > stop) {
           return connection.write("*0\r\n");
         }
 
