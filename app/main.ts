@@ -74,6 +74,27 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write(`:${list.length}\r\n`);
       }
+
+      if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "LRANGE") {
+        const key = lines[4];
+        const start = parseInt(lines[6]);
+        const stop = parseInt(lines[8]);
+        const list = lists.get(key);
+
+        if (!list || start >= list.length || start > stop) {
+          return connection.write("*0\r\n");
+        }
+
+        const endIndex = Math.min(stop, list.length - 1);
+        const elements = list.slice(start, endIndex + 1);
+        let response = `*${elements.length}\r\n`;
+
+        for (const element of elements) {
+          response += `$${element.length}\r\n${element}\r\n`;
+        }
+
+        return connection.write(response);
+      }
     }
 
     connection.write(buffer.toString());
