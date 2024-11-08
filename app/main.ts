@@ -936,11 +936,13 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 6 && lines[1] === "$7" && lines[2] === "PUBLISH") {
         const channel = lines[4];
+        const message = lines[6];
         let subscriberCount = 0;
 
         for (const [socket, channels] of subscribers) {
           if (channels.has(channel)) {
             subscriberCount++;
+            socket.write(`*3\r\n$7\r\nmessage\r\n$${channel.length}\r\n${channel}\r\n$${message.length}\r\n${message}\r\n`);
           }
         }
 
