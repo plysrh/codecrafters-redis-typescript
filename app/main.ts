@@ -933,6 +933,19 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write(`*3\r\n$9\r\nsubscribe\r\n$${channel.length}\r\n${channel}\r\n:${subscriptionCount}\r\n`);
       }
+
+      if (lines.length >= 6 && lines[1] === "$7" && lines[2] === "PUBLISH") {
+        const channel = lines[4];
+        let subscriberCount = 0;
+
+        for (const [socket, channels] of subscribers) {
+          if (channels.has(channel)) {
+            subscriberCount++;
+          }
+        }
+
+        return connection.write(`:${subscriberCount}\r\n`);
+      }
     }
 
     connection.write(buffer.toString());
