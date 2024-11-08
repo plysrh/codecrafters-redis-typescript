@@ -32,7 +32,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         // Check for PX option
         if (lines.length >= 10 && lines[7] === "$2" && lines[8] === "PX") {
-          const ms = parseInt(lines[10]);
+          const ms = parseInt(lines[10], 10);
 
           expiry = Date.now() + ms;
         }
@@ -66,6 +66,25 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         for (let i = 6; i < lines.length - 1; i += 2) {
           if (lines[i]) {
             list.push(lines[i]);
+          }
+        }
+
+        return connection.write(`:${list.length}\r\n`);
+      }
+
+      if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "LPUSH") {
+        const key = lines[4];
+
+        if (!lists.has(key)) {
+          lists.set(key, []);
+        }
+
+        const list = lists.get(key)!;
+
+        // Extract and prepend elements in order
+        for (let i = 6; i < lines.length - 1; i += 2) {
+          if (lines[i]) {
+            list.unshift(lines[i]);
           }
         }
 
