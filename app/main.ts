@@ -91,6 +91,13 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write(`:${list.length}\r\n`);
       }
 
+      if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "LLEN") {
+        const key = lines[4];
+        const list = lists.get(key);
+        const length = list ? list.length : 0;
+        return connection.write(`:${length}\r\n`);
+      }
+
       if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "LRANGE") {
         const key = lines[4];
         let start = parseInt(lines[6], 10);
