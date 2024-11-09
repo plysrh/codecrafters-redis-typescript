@@ -95,7 +95,21 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const key = lines[4];
         const list = lists.get(key);
         const length = list ? list.length : 0;
+
         return connection.write(`:${length}\r\n`);
+      }
+
+      if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "LPOP") {
+        const key = lines[4];
+        const list = lists.get(key);
+
+        if (!list || list.length === 0) {
+          return connection.write("$-1\r\n");
+        }
+
+        const element = list.shift()!;
+
+        return connection.write(`$${element.length}\r\n${element}\r\n`);
       }
 
       if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "LRANGE") {
