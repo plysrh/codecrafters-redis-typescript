@@ -102,14 +102,31 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "LPOP") {
         const key = lines[4];
         const list = lists.get(key);
-
+        
         if (!list || list.length === 0) {
           return connection.write("$-1\r\n");
         }
-
-        const element = list.shift()!;
-
-        return connection.write(`$${element.length}\r\n${element}\r\n`);
+        
+        // Check if count parameter is provided
+        if (lines.length >= 6 && lines[5] && lines[6]) {
+          const count = parseInt(lines[6]);
+          const elements = [];
+          
+          for (let i = 0; i < count && list.length > 0; i++) {
+            elements.push(list.shift()!);
+          }
+          
+          let response = `*${elements.length}\r\n`;
+          for (const element of elements) {
+            response += `$${element.length}\r\n${element}\r\n`;
+          }
+          
+          return connection.write(response);
+        } else {
+          // Single element LPOP
+          const element = list.shift()!;
+          return connection.write(`$${element.length}\r\n${element}\r\n`);
+        }
       }
 
       if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "LRANGE") {
