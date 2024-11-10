@@ -934,6 +934,18 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write(`*3\r\n$9\r\nsubscribe\r\n$${channel.length}\r\n${channel}\r\n:${subscriptionCount}\r\n`);
       }
 
+      if (lines.length >= 4 && lines[1] === "$11" && lines[2] === "UNSUBSCRIBE") {
+        const channel = lines[4];
+
+        if (subscribers.has(connection)) {
+          subscribers.get(connection)!.delete(channel);
+        }
+
+        const subscriptionCount = subscribers.has(connection) ? subscribers.get(connection)!.size : 0;
+
+        return connection.write(`*3\r\n$11\r\nunsubscribe\r\n$${channel.length}\r\n${channel}\r\n:${subscriptionCount}\r\n`);
+      }
+
       if (lines.length >= 6 && lines[1] === "$7" && lines[2] === "PUBLISH") {
         const channel = lines[4];
         const message = lines[6];
