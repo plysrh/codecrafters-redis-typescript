@@ -5,6 +5,7 @@ console.log("Logs from your program will appear here!");
 
 const store = new Map<string, { value: string; expiry?: number }>();
 const lists = new Map<string, string[]>();
+const blockedClients = new Map<string, net.Socket[]>();
 
 // Uncomment this block to pass the first stage
 const server: net.Server = net.createServer((connection: net.Socket) => {
@@ -69,7 +70,23 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           }
         }
 
-        return connection.write(`:${list.length}\r\n`);
+        const finalLength = list.length;
+
+        // Check for blocked clients
+        const blocked = blockedClients.get(key);
+
+        if (blocked && blocked.length > 0) {
+          const client = blocked.shift()!;
+          const element = list.shift()!;
+
+          client.write(`*2\r\n$${key.length}\r\n${key}\r\n$${element.length}\r\n${element}\r\n`);
+
+          if (blocked.length === 0) {
+            blockedClients.delete(key);
+          }
+        }
+
+        return connection.write(`:${finalLength}\r\n`);
       }
 
       if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "LPUSH") {
@@ -88,7 +105,43 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           }
         }
 
-        return connection.write(`:${list.length}\r\n`);
+        const finalLength = list.length;
+
+        // Check for blocked clients
+        const blocked = blockedClients.get(key);
+
+        if (blocked && blocked.length > 0) {
+          const client = blocked.shift()!;
+          const element = list.shift()!;
+
+          client.write(`*2\r\n$${key.length}\r\n${key}\r\n$${element.length}\r\n${element}\r\n`);
+
+          if (blocked.length === 0) {
+            blockedClients.delete(key);
+          }
+        }
+
+        return connection.write(`:${finalLength}\r\n`);
+      }
+
+      if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "BLPOP") {
+        const key = lines[4];
+        const list = lists.get(key);
+
+        if (list && list.length > 0) {
+          const element = list.shift()!;
+
+          return connection.write(`*2\r\n$${key.length}\r\n${key}\r\n$${element.length}\r\n${element}\r\n`);
+        } else {
+          // Block the client
+          if (!blockedClients.has(key)) {
+            blockedClients.set(key, []);
+          }
+
+          blockedClients.get(key)!.push(connection);
+
+          return; // Don't send response, client is blocked
+        }
       }
 
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "LLEN") {
@@ -102,29 +155,31 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "LPOP") {
         const key = lines[4];
         const list = lists.get(key);
-        
+
         if (!list || list.length === 0) {
           return connection.write("$-1\r\n");
         }
-        
+
         // Check if count parameter is provided
         if (lines.length >= 6 && lines[5] && lines[6]) {
           const count = parseInt(lines[6]);
           const elements = [];
-          
+
           for (let i = 0; i < count && list.length > 0; i++) {
             elements.push(list.shift()!);
           }
-          
+
           let response = `*${elements.length}\r\n`;
+
           for (const element of elements) {
             response += `$${element.length}\r\n${element}\r\n`;
           }
-          
+
           return connection.write(response);
         } else {
           // Single element LPOP
           const element = list.shift()!;
+
           return connection.write(`$${element.length}\r\n${element}\r\n`);
         }
       }
