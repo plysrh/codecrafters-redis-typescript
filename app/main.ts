@@ -5,7 +5,7 @@ console.log("Logs from your program will appear here!");
 
 const store = new Map<string, { value: string; expiry?: number }>();
 const lists = new Map<string, string[]>();
-const blockedClients = new Map<string, net.Socket[]>();
+const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
 
 // Uncomment this block to pass the first stage
 const server: net.Server = net.createServer((connection: net.Socket) => {
@@ -76,10 +76,14 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const blocked = blockedClients.get(key);
 
         if (blocked && blocked.length > 0) {
-          const client = blocked.shift()!;
+          const clientInfo = blocked.shift()!;
           const element = list.shift()!;
 
-          client.write(`*2\r\n$${key.length}\r\n${key}\r\n$${element.length}\r\n${element}\r\n`);
+          if (clientInfo.timeout) {
+            clearTimeout(clientInfo.timeout);
+          }
+
+          clientInfo.socket.write(`*2\r\n$${key.length}\r\n${key}\r\n$${element.length}\r\n${element}\r\n`);
 
           if (blocked.length === 0) {
             blockedClients.delete(key);
@@ -111,10 +115,14 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const blocked = blockedClients.get(key);
 
         if (blocked && blocked.length > 0) {
-          const client = blocked.shift()!;
+          const clientInfo = blocked.shift()!;
           const element = list.shift()!;
 
-          client.write(`*2\r\n$${key.length}\r\n${key}\r\n$${element.length}\r\n${element}\r\n`);
+          if (clientInfo.timeout) {
+            clearTimeout(clientInfo.timeout);
+          }
+
+          clientInfo.socket.write(`*2\r\n$${key.length}\r\n${key}\r\n$${element.length}\r\n${element}\r\n`);
 
           if (blocked.length === 0) {
             blockedClients.delete(key);
@@ -126,6 +134,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "BLPOP") {
         const key = lines[4];
+        const timeoutSeconds = parseFloat(lines[6]);
         const list = lists.get(key);
 
         if (list && list.length > 0) {
@@ -138,7 +147,25 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             blockedClients.set(key, []);
           }
 
-          blockedClients.get(key)!.push(connection);
+          let timeout: NodeJS.Timeout | undefined;
+          if (timeoutSeconds > 0) {
+            timeout = setTimeout(() => {
+              const blocked = blockedClients.get(key);
+
+              if (blocked) {
+                const index = blocked.findIndex(client => client.socket === connection);
+                if (index !== -1) {
+                  blocked.splice(index, 1);
+                  if (blocked.length === 0) {
+                    blockedClients.delete(key);
+                  }
+                  connection.write("*-1\r\n");
+                }
+              }
+            }, timeoutSeconds * 1000);
+          }
+
+          blockedClients.get(key)!.push({ socket: connection, timeout });
 
           return; // Don't send response, client is blocked
         }
@@ -186,10 +213,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "LRANGE") {
         const key = lines[4];
+        const list = lists.get(key);
         let start = parseInt(lines[6], 10);
         let stop = parseInt(lines[8], 10);
 
-        const list = lists.get(key);
 
         if (!list) {
           return connection.write("*0\r\n");
