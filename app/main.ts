@@ -5,6 +5,7 @@ console.log("Logs from your program will appear here!");
 
 const store = new Map<string, { value: string; expiry?: number }>();
 const lists = new Map<string, string[]>();
+const streams = new Map<string, { id: string; fields: Record<string, string> }[]>();
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
 
 // Uncomment this block to pass the first stage
@@ -246,6 +247,29 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write(response);
       }
 
+      if (lines.length >= 8 && lines[1] === "$4" && lines[2] === "XADD") {
+        const key = lines[4];
+        const id = lines[6];
+        
+        if (!streams.has(key)) {
+          streams.set(key, []);
+        }
+        
+        const stream = streams.get(key)!;
+        const fields: Record<string, string> = {};
+        
+        // Extract key-value pairs starting from index 8
+        for (let i = 8; i < lines.length - 1; i += 4) {
+          if (lines[i] && lines[i + 2]) {
+            fields[lines[i]] = lines[i + 2];
+          }
+        }
+        
+        stream.push({ id, fields });
+        
+        return connection.write(`$${id.length}\r\n${id}\r\n`);
+      }
+
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "TYPE") {
         const key = lines[4];
         // Check if key exists in string store
@@ -258,6 +282,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         // Check if key exists in lists
         if (lists.has(key)) {
           return connection.write("+list\r\n");
+        }
+        
+        // Check if key exists in streams
+        if (streams.has(key)) {
+          return connection.write("+stream\r\n");
         }
 
         // Key doesn't exist
