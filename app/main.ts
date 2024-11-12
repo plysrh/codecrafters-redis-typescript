@@ -245,6 +245,24 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write(response);
       }
+
+      if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "TYPE") {
+        const key = lines[4];
+        // Check if key exists in string store
+        const stringEntry = store.get(key);
+
+        if (stringEntry && (!stringEntry.expiry || Date.now() <= stringEntry.expiry)) {
+          return connection.write("+string\r\n");
+        }
+
+        // Check if key exists in lists
+        if (lists.has(key)) {
+          return connection.write("+list\r\n");
+        }
+
+        // Key doesn't exist
+        return connection.write("+none\r\n");
+      }
     }
 
     connection.write(buffer.toString());
