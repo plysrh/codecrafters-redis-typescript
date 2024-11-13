@@ -8,6 +8,7 @@ console.log("Logs from your program will appear here!");
 const store = new Map<string, { value: string; expiry?: number }>();
 const lists = new Map<string, string[]>();
 const streams = new Map<string, { id: string; fields: Record<string, string> }[]>();
+const sortedSets = new Map<string, { member: string; score: number }[]>();
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
 const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
 const transactions = new Map<net.Socket, boolean>();
@@ -845,6 +846,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           return connection.write("+stream\r\n");
         }
 
+        // Check if key exists in sorted sets
+        if (sortedSets.has(key)) {
+          return connection.write("+zset\r\n");
+        }
+
         // Key doesn't exist
         return connection.write("+none\r\n");
       }
@@ -959,6 +965,35 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         return connection.write(`:${subscriberCount}\r\n`);
+      }
+
+      if (lines.length >= 8 && lines[1] === "$4" && lines[2] === "ZADD") {
+        const key = lines[4];
+        const score = parseFloat(lines[6]);
+        const member = lines[8];
+
+        if (!sortedSets.has(key)) {
+          sortedSets.set(key, []);
+        }
+
+        const sortedSet = sortedSets.get(key)!;
+        
+        // Check if member already exists
+        const existingIndex = sortedSet.findIndex(item => item.member === member);
+        
+        if (existingIndex !== -1) {
+          // Update existing member's score
+          sortedSet[existingIndex].score = score;
+          // Re-sort the array
+          sortedSet.sort((a, b) => a.score - b.score);
+          return connection.write(":0\r\n");
+        } else {
+          // Add new member
+          sortedSet.push({ member, score });
+          // Sort the array by score
+          sortedSet.sort((a, b) => a.score - b.score);
+          return connection.write(":1\r\n");
+        }
       }
     }
 
