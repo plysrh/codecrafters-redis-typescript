@@ -190,7 +190,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         // Check if count parameter is provided
         if (lines.length >= 6 && lines[5] && lines[6]) {
-          const count = parseInt(lines[6]);
+          const count = parseInt(lines[6], 10);
           const elements = [];
 
           for (let i = 0; i < count && list.length > 0; i++) {
@@ -250,23 +250,46 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       if (lines.length >= 8 && lines[1] === "$4" && lines[2] === "XADD") {
         const key = lines[4];
         const id = lines[6];
-        
+        // Parse ID components
+        const [msStr, seqStr] = id.split('-');
+        const ms = parseInt(msStr, 10);
+        const seq = parseInt(seqStr, 10);
+
+        // Check if ID is 0-0
+        if (ms === 0 && seq === 0) {
+          return connection.write("-ERR The ID specified in XADD must be greater than 0-0\r\n");
+        }
+
         if (!streams.has(key)) {
           streams.set(key, []);
         }
-        
+
         const stream = streams.get(key)!;
+
+        // Validate ID against last entry
+        if (stream.length > 0) {
+          const lastEntry = stream[stream.length - 1];
+          const [lastMsStr, lastSeqStr] = lastEntry.id.split('-');
+          const lastMs = parseInt(lastMsStr, 10);
+          const lastSeq = parseInt(lastSeqStr, 10);
+
+          // ID must be strictly greater than last ID
+          if (ms < lastMs || (ms === lastMs && seq <= lastSeq)) {
+            return connection.write("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
+          }
+        }
+
         const fields: Record<string, string> = {};
-        
+
         // Extract key-value pairs starting from index 8
         for (let i = 8; i < lines.length - 1; i += 4) {
           if (lines[i] && lines[i + 2]) {
             fields[lines[i]] = lines[i + 2];
           }
         }
-        
+
         stream.push({ id, fields });
-        
+
         return connection.write(`$${id.length}\r\n${id}\r\n`);
       }
 
@@ -283,7 +306,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         if (lists.has(key)) {
           return connection.write("+list\r\n");
         }
-        
+
         // Check if key exists in streams
         if (streams.has(key)) {
           return connection.write("+stream\r\n");
