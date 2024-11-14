@@ -265,6 +265,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
           // Find the highest sequence number for this millisecond time
           let maxSeq = -1;
+
           for (const entry of stream) {
             const [entryMsStr, entrySeqStr] = entry.id.split('-');
             const entryMs = parseInt(entryMsStr, 10);
@@ -286,6 +287,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           if (seqStr === '*') {
             // Find the highest sequence number for this millisecond time
             let maxSeq = -1;
+
             for (const entry of stream) {
               const [entryMsStr, entrySeqStr] = entry.id.split('-');
               const entryMs = parseInt(entryMsStr, 10);
