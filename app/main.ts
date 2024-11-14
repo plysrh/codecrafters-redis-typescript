@@ -250,9 +250,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       if (lines.length >= 8 && lines[1] === "$4" && lines[2] === "XADD") {
         const key = lines[4];
         let id = lines[6];
-        // Parse ID components
-        const [msStr, seqStr] = id.split('-');
-        const ms = parseInt(msStr);
+        let ms: number;
         let seq: number;
 
         if (!streams.has(key)) {
@@ -261,31 +259,55 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         const stream = streams.get(key)!;
 
-        // Handle auto-generation of sequence number
-        if (seqStr === '*') {
+        // Handle fully auto-generated ID
+        if (id === '*') {
+          ms = Date.now();
+
           // Find the highest sequence number for this millisecond time
           let maxSeq = -1;
           for (const entry of stream) {
             const [entryMsStr, entrySeqStr] = entry.id.split('-');
-            const entryMs = parseInt(entryMsStr);
-            const entrySeq = parseInt(entrySeqStr);
+            const entryMs = parseInt(entryMsStr, 10);
+            const entrySeq = parseInt(entrySeqStr, 10);
 
             if (entryMs === ms && entrySeq > maxSeq) {
               maxSeq = entrySeq;
             }
           }
 
-          // Set sequence number based on rules
-          if (ms === 0) {
-            seq = maxSeq === -1 ? 1 : maxSeq + 1; // For time 0, start at 1 if no entries, otherwise increment
-          } else {
-            seq = maxSeq === -1 ? 0 : maxSeq + 1; // For other times, start at 0 if no entries, otherwise increment
-          }
-
-          // Update the ID with generated sequence number
+          seq = maxSeq === -1 ? 0 : maxSeq + 1;
           id = `${ms}-${seq}`;
         } else {
-          seq = parseInt(seqStr);
+          // Parse ID components
+          const [msStr, seqStr] = id.split('-');
+          ms = parseInt(msStr, 10);
+
+          // Handle auto-generation of sequence number
+          if (seqStr === '*') {
+            // Find the highest sequence number for this millisecond time
+            let maxSeq = -1;
+            for (const entry of stream) {
+              const [entryMsStr, entrySeqStr] = entry.id.split('-');
+              const entryMs = parseInt(entryMsStr, 10);
+              const entrySeq = parseInt(entrySeqStr, 10);
+
+              if (entryMs === ms && entrySeq > maxSeq) {
+                maxSeq = entrySeq;
+              }
+            }
+
+            // Set sequence number based on rules
+            if (ms === 0) {
+              seq = maxSeq === -1 ? 1 : maxSeq + 1; // For time 0, start at 1 if no entries, otherwise increment
+            } else {
+              seq = maxSeq === -1 ? 0 : maxSeq + 1; // For other times, start at 0 if no entries, otherwise increment
+            }
+
+            // Update the ID with generated sequence number
+            id = `${ms}-${seq}`;
+          } else {
+            seq = parseInt(seqStr, 10);
+          }
         }
 
         // Check if ID is 0-0
@@ -297,8 +319,8 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         if (stream.length > 0) {
           const lastEntry = stream[stream.length - 1];
           const [lastMsStr, lastSeqStr] = lastEntry.id.split('-');
-          const lastMs = parseInt(lastMsStr);
-          const lastSeq = parseInt(lastSeqStr);
+          const lastMs = parseInt(lastMsStr, 10);
+          const lastSeq = parseInt(lastSeqStr, 10);
 
           // ID must be strictly greater than last ID
           if (ms < lastMs || (ms === lastMs && seq <= lastSeq)) {
