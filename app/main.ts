@@ -355,15 +355,19 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         // Parse start and end IDs with default sequence numbers
-        const parseId = (id: string) => {
+        const parseId = (id: string, isStart: boolean) => {
+          if (id === '-') {
+            return { ms: 0, seq: 0 };
+          }
+
           const parts = id.split('-');
           const ms = parseInt(parts[0], 10);
-          const seq = parts.length > 1 ? parseInt(parts[1]) : (id === startId ? 0 : Number.MAX_SAFE_INTEGER, 10);
+          const seq = parts.length > 1 ? parseInt(parts[1], 10) : (isStart ? 0 : Number.MAX_SAFE_INTEGER);
           return { ms, seq };
         };
 
-        const start = parseId(startId);
-        const end = parseId(endId);
+        const start = parseId(startId, true);
+        const end = parseId(endId, false);
 
         // Filter entries within range
         const matchingEntries = stream.filter(entry => {
