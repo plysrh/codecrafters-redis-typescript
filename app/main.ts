@@ -1162,9 +1162,8 @@ if (isReplica) {
   let replicationOffset = 0;
 
   masterSocket.on('data', (buffer: Buffer) => {
-    const input = buffer.toString();
-
     if (!handshakeComplete) {
+      const input = buffer.toString();
       handshakeStep++;
 
       if (handshakeStep === 1) {
@@ -1182,9 +1181,11 @@ if (isReplica) {
       }
     } else {
       // Process propagated commands silently
+      const input = buffer.toString();
       console.log("Replica received:", JSON.stringify(input));
 
       let remaining = input;
+      let remainingBuffer = buffer;
 
       // Skip RDB file data if present (starts with $)
       if (remaining.startsWith("$")) {
@@ -1198,14 +1199,17 @@ if (isReplica) {
 
           console.log(`RDB length: ${rdbLength}, header length: ${headerLength}`);
 
-          remaining = remaining.substring(headerLength + rdbLength);
+          // Skip RDB header + RDB data using buffer operations
+          const skipBytes = headerLength + rdbLength;
+          remainingBuffer = remainingBuffer.subarray(skipBytes);
+          remaining = remainingBuffer.toString();
 
           console.log("After RDB skip, remaining:", JSON.stringify(remaining));
         }
       }
 
       // If no commands to process, return
-      if (!remaining.startsWith("*")) {
+      if (!remaining || !remaining.startsWith("*")) {
         console.log("No commands to process");
 
         return;
