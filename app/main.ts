@@ -977,23 +977,53 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         const sortedSet = sortedSets.get(key)!;
-        
         // Check if member already exists
         const existingIndex = sortedSet.findIndex(item => item.member === member);
-        
+
         if (existingIndex !== -1) {
           // Update existing member's score
           sortedSet[existingIndex].score = score;
-          // Re-sort the array
-          sortedSet.sort((a, b) => a.score - b.score);
+          // Re-sort the array by score, then lexicographically
+          sortedSet.sort((a, b) => {
+            if (a.score !== b.score) {
+              return a.score - b.score;
+            }
+
+            return a.member.localeCompare(b.member);
+          });
           return connection.write(":0\r\n");
         } else {
           // Add new member
           sortedSet.push({ member, score });
-          // Sort the array by score
-          sortedSet.sort((a, b) => a.score - b.score);
+          // Sort the array by score, then lexicographically
+          sortedSet.sort((a, b) => {
+            if (a.score !== b.score) {
+              return a.score - b.score;
+            }
+
+            return a.member.localeCompare(b.member);
+          });
+
           return connection.write(":1\r\n");
         }
+      }
+
+      if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "ZRANK") {
+        const key = lines[4];
+        const member = lines[6];
+        const sortedSet = sortedSets.get(key);
+
+        if (!sortedSet) {
+          return connection.write("$-1\r\n");
+        }
+
+        const memberIndex = sortedSet.findIndex(item => item.member === member);
+
+        if (memberIndex === -1) {
+          return connection.write("$-1\r\n");
+        }
+
+        return connection.write(`:${memberIndex}\r\n`);
       }
     }
 
@@ -1015,6 +1045,7 @@ for (let i = 0; i < args.length; i++) {
     port = parseInt(args[i + 1], 10);
   } else if (args[i] === '--replicaof' && i + 1 < args.length) {
     const masterInfo = args[i + 1].split(' ');
+
     isReplica = true;
     masterHost = masterInfo[0];
     masterPort = parseInt(masterInfo[1], 10);
@@ -1052,6 +1083,7 @@ function loadRDBFile() {
       const [nameLen, namePos] = readLength(data, pos);
       pos = namePos + nameLen;
       const [valueLen, valuePos] = readLength(data, pos);
+
       pos = valuePos + valueLen;
     } else if (byte === 0xFE) {
       // Database section
@@ -1063,6 +1095,7 @@ function loadRDBFile() {
       if (pos < data.length && data[pos] === 0xFB) {
         // Hash table size info
         pos++;
+
         const [hashTableSize, hashPos] = readLength(data, pos);
         pos = hashPos;
         const [expireHashSize, expirePos] = readLength(data, pos);
@@ -1077,23 +1110,27 @@ function loadRDBFile() {
         if (data[pos] === 0xFC) {
           // Milliseconds
           pos++;
+
           expiry = Number(data.readBigUInt64LE(pos));
+
           pos += 8;
         } else if (data[pos] === 0xFD) {
           // Seconds
           pos++;
+
           expiry = data.readUInt32LE(pos) * 1000;
+
           pos += 4;
         }
 
         // Value type
         const valueType = data[pos];
+
         pos++;
 
         // Key
         const [key, keyPos] = readString(data, pos);
         pos = keyPos;
-
         // Value
         const [value, valuePos] = readString(data, pos);
         pos = valuePos;
@@ -1164,6 +1201,7 @@ if (isReplica) {
   masterSocket.on('data', (buffer: Buffer) => {
     if (!handshakeComplete) {
       const input = buffer.toString();
+
       handshakeStep++;
 
       if (handshakeStep === 1) {
@@ -1182,6 +1220,7 @@ if (isReplica) {
     } else {
       // Process propagated commands silently
       const input = buffer.toString();
+
       console.log("Replica received:", JSON.stringify(input));
 
       let remaining = input;
