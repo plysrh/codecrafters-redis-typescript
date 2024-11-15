@@ -344,6 +344,57 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write(`$${id.length}\r\n${id}\r\n`);
       }
 
+      if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "XRANGE") {
+        const key = lines[4];
+        const startId = lines[6];
+        const endId = lines[8];
+
+        const stream = streams.get(key);
+        if (!stream) {
+          return connection.write("*0\r\n");
+        }
+
+        // Parse start and end IDs with default sequence numbers
+        const parseId = (id: string) => {
+          const parts = id.split('-');
+          const ms = parseInt(parts[0], 10);
+          const seq = parts.length > 1 ? parseInt(parts[1]) : (id === startId ? 0 : Number.MAX_SAFE_INTEGER, 10);
+          return { ms, seq };
+        };
+
+        const start = parseId(startId);
+        const end = parseId(endId);
+
+        // Filter entries within range
+        const matchingEntries = stream.filter(entry => {
+          const [entryMsStr, entrySeqStr] = entry.id.split('-');
+          const entryMs = parseInt(entryMsStr, 10);
+          const entrySeq = parseInt(entrySeqStr, 10);
+
+          // Check if entry is within range (inclusive)
+          const afterStart = entryMs > start.ms || (entryMs === start.ms && entrySeq >= start.seq);
+          const beforeEnd = entryMs < end.ms || (entryMs === end.ms && entrySeq <= end.seq);
+
+          return afterStart && beforeEnd;
+        });
+
+        // Build RESP response
+        let response = `*${matchingEntries.length}\r\n`;
+
+        for (const entry of matchingEntries) {
+          const fieldArray = Object.entries(entry.fields).flat();
+          response += `*2\r\n`; // Entry array with 2 elements: ID and fields
+          response += `$${entry.id.length}\r\n${entry.id}\r\n`; // Entry ID
+          response += `*${fieldArray.length}\r\n`; // Fields array
+
+          for (const field of fieldArray) {
+            response += `$${field.length}\r\n${field}\r\n`;
+          }
+        }
+
+        return connection.write(response);
+      }
+
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "TYPE") {
         const key = lines[4];
         // Check if key exists in string store
