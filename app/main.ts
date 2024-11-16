@@ -348,8 +348,8 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const key = lines[4];
         const startId = lines[6];
         const endId = lines[8];
-
         const stream = streams.get(key);
+
         if (!stream) {
           return connection.write("*0\r\n");
         }
@@ -360,9 +360,14 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             return { ms: 0, seq: 0 };
           }
 
+          if (id === '+') {
+            return { ms: Number.MAX_SAFE_INTEGER, seq: Number.MAX_SAFE_INTEGER };
+          }
+
           const parts = id.split('-');
-          const ms = parseInt(parts[0], 10);
-          const seq = parts.length > 1 ? parseInt(parts[1], 10) : (isStart ? 0 : Number.MAX_SAFE_INTEGER);
+          const ms = parseInt(parts[0]);
+          const seq = parts.length > 1 ? parseInt(parts[1]) : (isStart ? 0 : Number.MAX_SAFE_INTEGER);
+
           return { ms, seq };
         };
 
