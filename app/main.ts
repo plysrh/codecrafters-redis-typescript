@@ -365,8 +365,8 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           }
 
           const parts = id.split('-');
-          const ms = parseInt(parts[0]);
-          const seq = parts.length > 1 ? parseInt(parts[1]) : (isStart ? 0 : Number.MAX_SAFE_INTEGER);
+          const ms = parseInt(parts[0], 10);
+          const seq = parts.length > 1 ? parseInt(parts[1], 10) : (isStart ? 0 : Number.MAX_SAFE_INTEGER);
 
           return { ms, seq };
         };
@@ -405,49 +405,64 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       }
 
       if (lines.length >= 8 && lines[1] === "$5" && lines[2] === "XREAD" && lines[4] === "streams") {
-        const key = lines[6];
-        const startId = lines[8];
-        const stream = streams.get(key);
+        // Parse multiple streams: XREAD STREAMS key1 key2 ... id1 id2 ...
+        const totalArgs = parseInt(lines[0].substring(1), 10); // Get array length
+        const numStreams = (totalArgs - 2) / 2; // Subtract XREAD and STREAMS, divide by 2
+        const streamResults = [];
 
-        if (!stream) {
-          return connection.write("*0\r\n");
+        for (let i = 0; i < numStreams; i++) {
+          const keyIndex = 6 + i * 2; // Keys start at index 6, every 2 positions
+          const idIndex = 6 + numStreams * 2 + i * 2; // IDs start after all keys
+          const key = lines[keyIndex];
+          const startId = lines[idIndex];
+          const stream = streams.get(key);
+
+          if (!stream) {
+            continue; // Skip non-existent streams
+          }
+
+          // Parse start ID
+          const [startMsStr, startSeqStr] = startId.split('-');
+          const startMs = parseInt(startMsStr, 10);
+          const startSeq = parseInt(startSeqStr, 10);
+
+          // Filter entries with ID greater than start ID (exclusive)
+          const matchingEntries = stream.filter(entry => {
+            const [entryMsStr, entrySeqStr] = entry.id.split('-');
+            const entryMs = parseInt(entryMsStr, 10);
+            const entrySeq = parseInt(entrySeqStr, 10);
+
+            // Entry ID must be strictly greater than start ID
+            return entryMs > startMs || (entryMs === startMs && entrySeq > startSeq);
+          });
+
+          if (matchingEntries.length > 0) {
+            streamResults.push({ key, entries: matchingEntries });
+          }
         }
 
-        // Parse start ID
-        const [startMsStr, startSeqStr] = startId.split('-');
-        const startMs = parseInt(startMsStr);
-        const startSeq = parseInt(startSeqStr);
-
-        // Filter entries with ID greater than start ID (exclusive)
-        const matchingEntries = stream.filter(entry => {
-          const [entryMsStr, entrySeqStr] = entry.id.split('-');
-          const entryMs = parseInt(entryMsStr);
-          const entrySeq = parseInt(entrySeqStr);
-
-          // Entry ID must be strictly greater than start ID
-          return entryMs > startMs || (entryMs === startMs && entrySeq > startSeq);
-        });
-
-        if (matchingEntries.length === 0) {
+        if (streamResults.length === 0) {
           return connection.write("*0\r\n");
         }
 
         // Build RESP response: array of streams
-        let response = "*1\r\n"; // One stream
+        let response = `*${streamResults.length}\r\n`;
 
-        response += "*2\r\n"; // Stream array with 2 elements: key and entries
-        response += `$${key.length}\r\n${key}\r\n`; // Stream key
-        response += `*${matchingEntries.length}\r\n`; // Entries array
+        for (const streamResult of streamResults) {
+          response += "*2\r\n"; // Stream array with 2 elements: key and entries
+          response += `$${streamResult.key.length}\r\n${streamResult.key}\r\n`; // Stream key
+          response += `*${streamResult.entries.length}\r\n`; // Entries array
 
-        for (const entry of matchingEntries) {
-          const fieldArray = Object.entries(entry.fields).flat();
+          for (const entry of streamResult.entries) {
+            const fieldArray = Object.entries(entry.fields).flat();
 
-          response += "*2\r\n"; // Entry array with 2 elements: ID and fields
-          response += `$${entry.id.length}\r\n${entry.id}\r\n`; // Entry ID
-          response += `*${fieldArray.length}\r\n`; // Fields array
+            response += "*2\r\n"; // Entry array with 2 elements: ID and fields
+            response += `$${entry.id.length}\r\n${entry.id}\r\n`; // Entry ID
+            response += `*${fieldArray.length}\r\n`; // Fields array
 
-          for (const field of fieldArray) {
-            response += `$${field.length}\r\n${field}\r\n`;
+            for (const field of fieldArray) {
+              response += `$${field.length}\r\n${field}\r\n`;
+            }
           }
         }
 
