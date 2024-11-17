@@ -1025,6 +1025,32 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write(`:${memberIndex}\r\n`);
       }
+
+      if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "ZRANGE") {
+        const key = lines[4];
+        const start = parseInt(lines[6], 10);
+        const stop = parseInt(lines[8], 10);
+        const sortedSet = sortedSets.get(key);
+
+        if (!sortedSet || sortedSet.length === 0) {
+          return connection.write("*0\r\n");
+        }
+
+        // Handle edge cases
+        if (start >= sortedSet.length || start > stop) {
+          return connection.write("*0\r\n");
+        }
+
+        const endIndex = Math.min(stop, sortedSet.length - 1);
+        const members = sortedSet.slice(start, endIndex + 1);
+        let response = `*${members.length}\r\n`;
+
+        for (const item of members) {
+          response += `$${item.member.length}\r\n${item.member}\r\n`;
+        }
+
+        return connection.write(response);
+      }
     }
 
     connection.write(buffer.toString());
