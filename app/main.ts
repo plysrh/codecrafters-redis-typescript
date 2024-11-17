@@ -1028,12 +1028,20 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 8 && lines[1] === "$6" && lines[2] === "ZRANGE") {
         const key = lines[4];
-        const start = parseInt(lines[6], 10);
-        const stop = parseInt(lines[8], 10);
         const sortedSet = sortedSets.get(key);
+        let start = parseInt(lines[6], 10);
+        let stop = parseInt(lines[8], 10);
 
         if (!sortedSet || sortedSet.length === 0) {
           return connection.write("*0\r\n");
+        }
+
+        // Handle negative indexes
+        if (start < 0) {
+          start = Math.max(0, sortedSet.length + start);
+        }
+        if (stop < 0) {
+          stop = sortedSet.length + stop;
         }
 
         // Handle edge cases
