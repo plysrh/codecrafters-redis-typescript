@@ -1059,6 +1059,17 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write(response);
       }
+
+      if (lines.length >= 4 && lines[1] === "$5" && lines[2] === "ZCARD") {
+        const key = lines[4];
+        const sortedSet = sortedSets.get(key);
+
+        if (!sortedSet) {
+          return connection.write(":0\r\n");
+        }
+
+        return connection.write(`:${sortedSet.length}\r\n`);
+      }
     }
 
     connection.write(buffer.toString());
