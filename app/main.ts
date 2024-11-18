@@ -7,6 +7,7 @@ const store = new Map<string, { value: string; expiry?: number }>();
 const lists = new Map<string, string[]>();
 const streams = new Map<string, { id: string; fields: Record<string, string> }[]>();
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
+const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
 
 // Uncomment this block to pass the first stage
 const server: net.Server = net.createServer((connection: net.Socket) => {
@@ -341,6 +342,48 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         stream.push({ id, fields });
 
+        // Check for blocked XREAD clients
+        const blockedXRead = blockedXReadClients.get(key);
+
+        if (blockedXRead && blockedXRead.length > 0) {
+          const clientInfo = blockedXRead[0]; // Check first client
+          
+          // Check if new entry ID is greater than client's start ID
+          const [clientMsStr, clientSeqStr] = clientInfo.startId.split('-');
+          const clientMs = parseInt(clientMsStr);
+          const clientSeq = parseInt(clientSeqStr);
+          
+          if (ms > clientMs || (ms === clientMs && seq > clientSeq)) {
+            // Remove client from blocked queue
+            blockedXRead.shift();
+            
+            if (clientInfo.timeout) {
+              clearTimeout(clientInfo.timeout);
+            }
+
+            // Build response for blocked client
+            const fieldArray = Object.entries(fields).flat();
+            let response = "*1\r\n"; // One stream
+
+            response += "*2\r\n"; // Stream array: [key, entries]
+            response += `$${key.length}\r\n${key}\r\n`; // Stream key
+            response += "*1\r\n"; // One entry
+            response += "*2\r\n"; // Entry: [id, fields]
+            response += `$${id.length}\r\n${id}\r\n`; // Entry ID
+            response += `*${fieldArray.length}\r\n`; // Fields array
+
+            for (const field of fieldArray) {
+              response += `$${field.length}\r\n${field}\r\n`;
+            }
+
+            clientInfo.socket.write(response);
+
+            if (blockedXRead.length === 0) {
+              blockedXReadClients.delete(key);
+            }
+          }
+        }
+
         return connection.write(`$${id.length}\r\n${id}\r\n`);
       }
 
@@ -404,35 +447,48 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write(response);
       }
 
-      if (lines.length >= 8 && lines[1] === "$5" && lines[2] === "XREAD" && lines[4] === "streams") {
-        // Parse multiple streams: XREAD STREAMS key1 key2 ... id1 id2 ...
-        const totalArgs = parseInt(lines[0].substring(1), 10); // Get array length
-        const numStreams = (totalArgs - 2) / 2; // Subtract XREAD and STREAMS, divide by 2
+      if (lines.length >= 8 && lines[1] === "$5" && lines[2] === "XREAD") {
+        // Check for BLOCK parameter
+        const hasBlock = lines[4] === "block";
+        const streamsIndex = hasBlock ? 8 : 4;
+
+        if (lines[streamsIndex] !== "streams") {
+          return; // Invalid command format
+        }
+
+        let blockTimeout = 0;
+        if (hasBlock) {
+          blockTimeout = parseInt(lines[6]);
+        }
+
+        // Parse multiple streams: XREAD [BLOCK timeout] STREAMS key1 key2 ... id1 id2 ...
+        const totalArgs = parseInt(lines[0].substring(1));
+        const baseArgs = hasBlock ? 4 : 2; // XREAD [BLOCK timeout] STREAMS
+        const numStreams = (totalArgs - baseArgs) / 2;
+        const startIndex = streamsIndex + 2; // Start after "streams"
+
         const streamResults = [];
 
         for (let i = 0; i < numStreams; i++) {
-          const keyIndex = 6 + i * 2; // Keys start at index 6, every 2 positions
-          const idIndex = 6 + numStreams * 2 + i * 2; // IDs start after all keys
+          const keyIndex = startIndex + i * 2;
+          const idIndex = startIndex + numStreams * 2 + i * 2;
           const key = lines[keyIndex];
           const startId = lines[idIndex];
           const stream = streams.get(key);
 
           if (!stream) {
-            continue; // Skip non-existent streams
+            continue;
           }
 
-          // Parse start ID
           const [startMsStr, startSeqStr] = startId.split('-');
-          const startMs = parseInt(startMsStr, 10);
-          const startSeq = parseInt(startSeqStr, 10);
+          const startMs = parseInt(startMsStr);
+          const startSeq = parseInt(startSeqStr);
 
-          // Filter entries with ID greater than start ID (exclusive)
           const matchingEntries = stream.filter(entry => {
             const [entryMsStr, entrySeqStr] = entry.id.split('-');
-            const entryMs = parseInt(entryMsStr, 10);
-            const entrySeq = parseInt(entrySeqStr, 10);
+            const entryMs = parseInt(entryMsStr);
+            const entrySeq = parseInt(entrySeqStr);
 
-            // Entry ID must be strictly greater than start ID
             return entryMs > startMs || (entryMs === startMs && entrySeq > startSeq);
           });
 
@@ -442,23 +498,56 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         if (streamResults.length === 0) {
-          return connection.write("*0\r\n");
+          if (hasBlock) {
+            // Block the client for the first stream
+            const firstKey = lines[startIndex];
+            const firstStartId = lines[startIndex + numStreams * 2];
+
+            if (!blockedXReadClients.has(firstKey)) {
+              blockedXReadClients.set(firstKey, []);
+            }
+
+            let timeout: NodeJS.Timeout | undefined;
+
+            if (blockTimeout > 0) {
+              timeout = setTimeout(() => {
+                const blocked = blockedXReadClients.get(firstKey);
+
+                if (blocked) {
+                  const index = blocked.findIndex(client => client.socket === connection);
+                  if (index !== -1) {
+                    blocked.splice(index, 1);
+                    if (blocked.length === 0) {
+                      blockedXReadClients.delete(firstKey);
+                    }
+                    connection.write("*-1\r\n");
+                  }
+                }
+              }, blockTimeout);
+            }
+
+            blockedXReadClients.get(firstKey)!.push({ socket: connection, startId: firstStartId, timeout });
+
+            return; // Don't send response, client is blocked
+          } else {
+            return connection.write("*0\r\n");
+          }
         }
 
-        // Build RESP response: array of streams
+        // Build RESP response
         let response = `*${streamResults.length}\r\n`;
 
         for (const streamResult of streamResults) {
-          response += "*2\r\n"; // Stream array with 2 elements: key and entries
-          response += `$${streamResult.key.length}\r\n${streamResult.key}\r\n`; // Stream key
-          response += `*${streamResult.entries.length}\r\n`; // Entries array
+          response += "*2\r\n";
+          response += `$${streamResult.key.length}\r\n${streamResult.key}\r\n`;
+          response += `*${streamResult.entries.length}\r\n`;
 
           for (const entry of streamResult.entries) {
             const fieldArray = Object.entries(entry.fields).flat();
 
-            response += "*2\r\n"; // Entry array with 2 elements: ID and fields
-            response += `$${entry.id.length}\r\n${entry.id}\r\n`; // Entry ID
-            response += `*${fieldArray.length}\r\n`; // Fields array
+            response += "*2\r\n";
+            response += `$${entry.id.length}\r\n${entry.id}\r\n`;
+            response += `*${fieldArray.length}\r\n`;
 
             for (const field of fieldArray) {
               response += `$${field.length}\r\n${field}\r\n`;
