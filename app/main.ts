@@ -480,9 +480,24 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             continue;
           }
 
-          const [startMsStr, startSeqStr] = startId.split('-');
-          const startMs = parseInt(startMsStr);
-          const startSeq = parseInt(startSeqStr);
+          let startMs: number, startSeq: number;
+          
+          if (startId === '$') {
+            // Use the maximum ID currently in the stream
+            if (stream.length === 0) {
+              startMs = 0;
+              startSeq = 0;
+            } else {
+              const lastEntry = stream[stream.length - 1];
+              const [lastMsStr, lastSeqStr] = lastEntry.id.split('-');
+              startMs = parseInt(lastMsStr);
+              startSeq = parseInt(lastSeqStr);
+            }
+          } else {
+            const [startMsStr, startSeqStr] = startId.split('-');
+            startMs = parseInt(startMsStr);
+            startSeq = parseInt(startSeqStr);
+          }
 
           const matchingEntries = stream.filter(entry => {
             const [entryMsStr, entrySeqStr] = entry.id.split('-');
@@ -502,6 +517,17 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             // Block the client for the first stream
             const firstKey = lines[startIndex];
             const firstStartId = lines[startIndex + numStreams * 2];
+            
+            // Convert $ to actual ID for blocking
+            let actualStartId = firstStartId;
+            if (firstStartId === '$') {
+              const stream = streams.get(firstKey);
+              if (stream && stream.length > 0) {
+                actualStartId = stream[stream.length - 1].id;
+              } else {
+                actualStartId = '0-0';
+              }
+            }
 
             if (!blockedXReadClients.has(firstKey)) {
               blockedXReadClients.set(firstKey, []);
@@ -526,7 +552,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
               }, blockTimeout);
             }
 
-            blockedXReadClients.get(firstKey)!.push({ socket: connection, startId: firstStartId, timeout });
+            blockedXReadClients.get(firstKey)!.push({ socket: connection, startId: actualStartId, timeout });
 
             return; // Don't send response, client is blocked
           } else {
