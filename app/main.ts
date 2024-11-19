@@ -1070,6 +1070,26 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write(`:${sortedSet.length}\r\n`);
       }
+
+      if (lines.length >= 6 && lines[1] === "$6" && lines[2] === "ZSCORE") {
+        const key = lines[4];
+        const member = lines[6];
+        const sortedSet = sortedSets.get(key);
+
+        if (!sortedSet) {
+          return connection.write("$-1\r\n");
+        }
+
+        const memberItem = sortedSet.find(item => item.member === member);
+
+        if (!memberItem) {
+          return connection.write("$-1\r\n");
+        }
+
+        const scoreStr = memberItem.score.toString();
+
+        return connection.write(`$${scoreStr.length}\r\n${scoreStr}\r\n`);
+      }
     }
 
     connection.write(buffer.toString());
@@ -1126,7 +1146,9 @@ function loadRDBFile() {
       pos++;
 
       const [nameLen, namePos] = readLength(data, pos);
+
       pos = namePos + nameLen;
+
       const [valueLen, valuePos] = readLength(data, pos);
 
       pos = valuePos + valueLen;
