@@ -282,6 +282,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         } else {
           // Parse ID components
           const [msStr, seqStr] = id.split('-');
+
           ms = parseInt(msStr, 10);
 
           // Handle auto-generation of sequence number
@@ -602,6 +603,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           store.set(key, { value: newValue.toString(), expiry: entry.expiry });
 
           return connection.write(`:${newValue}\r\n`);
+        } else {
+          // Key doesn't exist, set to 1
+          store.set(key, { value: "1" });
+
+          return connection.write(":1\r\n");
         }
       }
 
