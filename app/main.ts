@@ -347,16 +347,16 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         if (blockedXRead && blockedXRead.length > 0) {
           const clientInfo = blockedXRead[0]; // Check first client
-          
+
           // Check if new entry ID is greater than client's start ID
           const [clientMsStr, clientSeqStr] = clientInfo.startId.split('-');
-          const clientMs = parseInt(clientMsStr);
-          const clientSeq = parseInt(clientSeqStr);
-          
+          const clientMs = parseInt(clientMsStr, 10);
+          const clientSeq = parseInt(clientSeqStr, 10);
+
           if (ms > clientMs || (ms === clientMs && seq > clientSeq)) {
             // Remove client from blocked queue
             blockedXRead.shift();
-            
+
             if (clientInfo.timeout) {
               clearTimeout(clientInfo.timeout);
             }
@@ -457,6 +457,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         let blockTimeout = 0;
+
         if (hasBlock) {
           blockTimeout = parseInt(lines[6]);
         }
@@ -466,7 +467,6 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const baseArgs = hasBlock ? 4 : 2; // XREAD [BLOCK timeout] STREAMS
         const numStreams = (totalArgs - baseArgs) / 2;
         const startIndex = streamsIndex + 2; // Start after "streams"
-
         const streamResults = [];
 
         for (let i = 0; i < numStreams; i++) {
@@ -481,7 +481,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           }
 
           let startMs: number, startSeq: number;
-          
+
           if (startId === '$') {
             // Use the maximum ID currently in the stream
             if (stream.length === 0) {
@@ -490,19 +490,21 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             } else {
               const lastEntry = stream[stream.length - 1];
               const [lastMsStr, lastSeqStr] = lastEntry.id.split('-');
-              startMs = parseInt(lastMsStr);
-              startSeq = parseInt(lastSeqStr);
+
+              startMs = parseInt(lastMsStr, 10);
+              startSeq = parseInt(lastSeqStr, 10);
             }
           } else {
             const [startMsStr, startSeqStr] = startId.split('-');
-            startMs = parseInt(startMsStr);
-            startSeq = parseInt(startSeqStr);
+
+            startMs = parseInt(startMsStr, 10);
+            startSeq = parseInt(startSeqStr, 10);
           }
 
           const matchingEntries = stream.filter(entry => {
             const [entryMsStr, entrySeqStr] = entry.id.split('-');
-            const entryMs = parseInt(entryMsStr);
-            const entrySeq = parseInt(entrySeqStr);
+            const entryMs = parseInt(entryMsStr, 10);
+            const entrySeq = parseInt(entrySeqStr, 10);
 
             return entryMs > startMs || (entryMs === startMs && entrySeq > startSeq);
           });
@@ -517,11 +519,13 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             // Block the client for the first stream
             const firstKey = lines[startIndex];
             const firstStartId = lines[startIndex + numStreams * 2];
-            
+
             // Convert $ to actual ID for blocking
             let actualStartId = firstStartId;
+
             if (firstStartId === '$') {
               const stream = streams.get(firstKey);
+
               if (stream && stream.length > 0) {
                 actualStartId = stream[stream.length - 1].id;
               } else {
@@ -541,11 +545,14 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
                 if (blocked) {
                   const index = blocked.findIndex(client => client.socket === connection);
+
                   if (index !== -1) {
                     blocked.splice(index, 1);
+
                     if (blocked.length === 0) {
                       blockedXReadClients.delete(firstKey);
                     }
+
                     connection.write("*-1\r\n");
                   }
                 }
@@ -582,6 +589,20 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         return connection.write(response);
+      }
+
+      if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "INCR") {
+        const key = lines[4];
+        const entry = store.get(key);
+
+        if (entry && (!entry.expiry || Date.now() <= entry.expiry)) {
+          const currentValue = parseInt(entry.value, 10);
+          const newValue = currentValue + 1;
+
+          store.set(key, { value: newValue.toString(), expiry: entry.expiry });
+
+          return connection.write(`:${newValue}\r\n`);
+        }
       }
 
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "TYPE") {
