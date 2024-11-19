@@ -1090,6 +1090,26 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write(`$${scoreStr.length}\r\n${scoreStr}\r\n`);
       }
+
+      if (lines.length >= 6 && lines[1] === "$4" && lines[2] === "ZREM") {
+        const key = lines[4];
+        const member = lines[6];
+        const sortedSet = sortedSets.get(key);
+
+        if (!sortedSet) {
+          return connection.write(":0\r\n");
+        }
+
+        const memberIndex = sortedSet.findIndex(item => item.member === member);
+
+        if (memberIndex === -1) {
+          return connection.write(":0\r\n");
+        }
+
+        sortedSet.splice(memberIndex, 1);
+
+        return connection.write(":1\r\n");
+      }
     }
 
     connection.write(buffer.toString());
