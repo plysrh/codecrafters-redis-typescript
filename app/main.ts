@@ -1110,6 +1110,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         return connection.write(":1\r\n");
       }
+
+      if (lines.length >= 10 && lines[1] === "$6" && lines[2] === "GEOADD") {
+        return connection.write(":1\r\n");
+      }
     }
 
     connection.write(buffer.toString());
