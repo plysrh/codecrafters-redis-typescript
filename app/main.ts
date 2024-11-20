@@ -598,6 +598,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         if (entry && (!entry.expiry || Date.now() <= entry.expiry)) {
           const currentValue = parseInt(entry.value, 10);
+          
+          if (isNaN(currentValue)) {
+            return connection.write("-ERR value is not an integer or out of range\r\n");
+          }
+          
           const newValue = currentValue + 1;
 
           store.set(key, { value: newValue.toString(), expiry: entry.expiry });
