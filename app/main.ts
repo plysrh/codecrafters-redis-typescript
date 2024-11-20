@@ -616,6 +616,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
       }
 
+      if (lines.length >= 3 && lines[1] === "$5" && lines[2] === "MULTI") {
+        return connection.write("+OK\r\n");
+      }
+
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "TYPE") {
         const key = lines[4];
         // Check if key exists in string store
