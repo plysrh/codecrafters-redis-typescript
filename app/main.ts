@@ -1112,6 +1112,17 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       }
 
       if (lines.length >= 10 && lines[1] === "$6" && lines[2] === "GEOADD") {
+        const longitude = parseFloat(lines[6]);
+        const latitude = parseFloat(lines[8]);
+
+        if (longitude < -180 || longitude > 180) {
+          return connection.write("-ERR invalid longitude\r\n");
+        }
+
+        if (latitude < -85.05112878 || latitude > 85.05112878) {
+          return connection.write("-ERR invalid latitude\r\n");
+        }
+
         return connection.write(":1\r\n");
       }
     }
