@@ -8,6 +8,7 @@ const lists = new Map<string, string[]>();
 const streams = new Map<string, { id: string; fields: Record<string, string> }[]>();
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
 const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
+const transactions = new Map<net.Socket, boolean>();
 
 // Uncomment this block to pass the first stage
 const server: net.Server = net.createServer((connection: net.Socket) => {
@@ -598,11 +599,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         if (entry && (!entry.expiry || Date.now() <= entry.expiry)) {
           const currentValue = parseInt(entry.value, 10);
-          
+
           if (isNaN(currentValue)) {
             return connection.write("-ERR value is not an integer or out of range\r\n");
           }
-          
+
           const newValue = currentValue + 1;
 
           store.set(key, { value: newValue.toString(), expiry: entry.expiry });
@@ -617,11 +618,18 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       }
 
       if (lines.length >= 3 && lines[1] === "$5" && lines[2] === "MULTI") {
+        transactions.set(connection, true);
         return connection.write("+OK\r\n");
       }
 
       if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "EXEC") {
-        return connection.write("-ERR EXEC without MULTI\r\n");
+        if (transactions.has(connection)) {
+          transactions.delete(connection);
+
+          return connection.write("*0\r\n");
+        } else {
+          return connection.write("-ERR EXEC without MULTI\r\n");
+        }
       }
 
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "TYPE") {
