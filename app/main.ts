@@ -1112,8 +1112,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       }
 
       if (lines.length >= 10 && lines[1] === "$6" && lines[2] === "GEOADD") {
+        const key = lines[4];
         const longitude = parseFloat(lines[6]);
         const latitude = parseFloat(lines[8]);
+        const member = lines[10];
 
         if (longitude < -180 || longitude > 180) {
           return connection.write("-ERR invalid longitude\r\n");
@@ -1123,7 +1125,22 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           return connection.write("-ERR invalid latitude\r\n");
         }
 
-        return connection.write(":1\r\n");
+        if (!sortedSets.has(key)) {
+          sortedSets.set(key, []);
+        }
+
+        const sortedSet = sortedSets.get(key)!;
+        const existingIndex = sortedSet.findIndex(item => item.member === member);
+
+        if (existingIndex !== -1) {
+          sortedSet[existingIndex].score = 0;
+
+          return connection.write(":0\r\n");
+        } else {
+          sortedSet.push({ member, score: 0 });
+
+          return connection.write(":1\r\n");
+        }
       }
     }
 
