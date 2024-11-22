@@ -19,6 +19,15 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
     if (input.startsWith("*")) {
       const lines = input.split("\r\n");
 
+      // Check if connection is in transaction and queue commands (except MULTI and EXEC)
+      if (transactions.has(connection)) {
+        const command = lines[2];
+
+        if (command !== "MULTI" && command !== "EXEC") {
+          return connection.write("+QUEUED\r\n");
+        }
+      }
+
       if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "PING") {
         return connection.write("+PONG\r\n");
       }
