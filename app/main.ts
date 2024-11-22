@@ -9,6 +9,57 @@ const streams = new Map<string, { id: string; fields: Record<string, string> }[]
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
 const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
 const transactions = new Map<net.Socket, boolean>();
+const queuedCommands = new Map<net.Socket, string[]>();
+
+// Function to execute a single command and return its response
+function executeCommand(commandInput: string): string {
+  const lines = commandInput.split("\r\n");
+
+  if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
+    const key = lines[4];
+    const value = lines[6];
+
+    store.set(key, { value });
+
+    return "+OK\r\n";
+  }
+
+  if (lines.length >= 4 && lines[1] === "$3" && lines[2] === "GET") {
+    const key = lines[4];
+    const entry = store.get(key);
+
+    if (!entry || (entry.expiry && Date.now() > entry.expiry)) {
+      return "$-1\r\n";
+    }
+
+    return `$${entry.value.length}\r\n${entry.value}\r\n`;
+  }
+
+  if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "INCR") {
+    const key = lines[4];
+    const entry = store.get(key);
+
+    if (entry && (!entry.expiry || Date.now() <= entry.expiry)) {
+      const currentValue = parseInt(entry.value, 10);
+
+      if (isNaN(currentValue)) {
+        return "-ERR value is not an integer or out of range\r\n";
+      }
+
+      const newValue = currentValue + 1;
+
+      store.set(key, { value: newValue.toString(), expiry: entry.expiry });
+
+      return `:${newValue}\r\n`;
+    } else {
+      store.set(key, { value: "1" });
+
+      return ":1\r\n";
+    }
+  }
+
+  return "+OK\r\n";
+}
 
 // Uncomment this block to pass the first stage
 const server: net.Server = net.createServer((connection: net.Socket) => {
@@ -24,6 +75,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const command = lines[2];
 
         if (command !== "MULTI" && command !== "EXEC") {
+          if (!queuedCommands.has(connection)) {
+            queuedCommands.set(connection, []);
+          }
+          queuedCommands.get(connection)!.push(input);
           return connection.write("+QUEUED\r\n");
         }
       }
@@ -628,6 +683,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 3 && lines[1] === "$5" && lines[2] === "MULTI") {
         transactions.set(connection, true);
+        queuedCommands.set(connection, []);
         return connection.write("+OK\r\n");
       }
 
@@ -635,7 +691,17 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         if (transactions.has(connection)) {
           transactions.delete(connection);
 
-          return connection.write("*0\r\n");
+          const commands = queuedCommands.get(connection) || [];
+          queuedCommands.delete(connection);
+
+          let response = `*${commands.length}\r\n`;
+
+          for (const command of commands) {
+            const commandResponse = executeCommand(command);
+            response += commandResponse;
+          }
+
+          return connection.write(response);
         } else {
           return connection.write("-ERR EXEC without MULTI\r\n");
         }
