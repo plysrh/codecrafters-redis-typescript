@@ -1195,6 +1195,27 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           return connection.write(":1\r\n");
         }
       }
+
+      if (lines.length >= 4 && lines[1] === "$6" && lines[2] === "GEOPOS") {
+        const key = lines[4];
+        const sortedSet = sortedSets.get(key);
+        const totalArgs = parseInt(lines[0].substring(1), 10);
+        const numMembers = totalArgs - 2;
+        let response = `*${numMembers}\r\n`;
+
+        for (let i = 0; i < numMembers; i++) {
+          const memberIndex = 6 + i * 2;
+          const member = lines[memberIndex];
+
+          if (sortedSet && sortedSet.find(item => item.member === member)) {
+            response += "*2\r\n$1\r\n0\r\n$1\r\n0\r\n";
+          } else {
+            response += "*-1\r\n";
+          }
+        }
+
+        return connection.write(response);
+      }
     }
 
     connection.write(buffer.toString());
