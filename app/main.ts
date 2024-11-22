@@ -9,6 +9,44 @@ const store = new Map<string, { value: string; expiry?: number }>();
 const lists = new Map<string, string[]>();
 const streams = new Map<string, { id: string; fields: Record<string, string> }[]>();
 const sortedSets = new Map<string, { member: string; score: number }[]>();
+
+// Geohash encoding function
+function encodeGeohash(longitude: number, latitude: number): number {
+  let lonMin = -180.0;
+  let lonMax = 180.0;
+  let latMin = -85.05112878;
+  let latMax = 85.05112878;
+  let geohash = 0;
+  let isEven = true;
+
+  for (let i = 0; i < 52; i++) {
+    if (isEven) {
+      const mid = (lonMin + lonMax) / 2;
+
+      if (longitude > mid) {
+        geohash = geohash * 2 + 1;
+        lonMin = mid;
+      } else {
+        geohash = geohash * 2;
+        lonMax = mid;
+      }
+    } else {
+      const mid = (latMin + latMax) / 2;
+
+      if (latitude > mid) {
+        geohash = geohash * 2 + 1;
+        latMin = mid;
+      } else {
+        geohash = geohash * 2;
+        latMax = mid;
+      }
+    }
+    isEven = !isEven;
+  }
+
+  return geohash;
+}
+
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
 const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
 const transactions = new Map<net.Socket, boolean>();
@@ -1131,13 +1169,28 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         const sortedSet = sortedSets.get(key)!;
         const existingIndex = sortedSet.findIndex(item => item.member === member);
+        const score = encodeGeohash(longitude, latitude);
 
         if (existingIndex !== -1) {
-          sortedSet[existingIndex].score = 0;
+          sortedSet[existingIndex].score = score;
+          sortedSet.sort((a, b) => {
+            if (a.score !== b.score) {
+              return a.score - b.score;
+            }
+
+            return a.member.localeCompare(b.member);
+          });
 
           return connection.write(":0\r\n");
         } else {
-          sortedSet.push({ member, score: 0 });
+          sortedSet.push({ member, score });
+          sortedSet.sort((a, b) => {
+            if (a.score !== b.score) {
+              return a.score - b.score;
+            }
+
+            return a.member.localeCompare(b.member);
+          });
 
           return connection.write(":1\r\n");
         }
@@ -1208,16 +1261,16 @@ function loadRDBFile() {
       // Database section
       pos++;
 
-      const [dbIndex, dbPos] = readLength(data, pos);
+      const [, dbPos] = readLength(data, pos);
       pos = dbPos;
 
       if (pos < data.length && data[pos] === 0xFB) {
         // Hash table size info
         pos++;
 
-        const [hashTableSize, hashPos] = readLength(data, pos);
+        const [, hashPos] = readLength(data, pos);
         pos = hashPos;
-        const [expireHashSize, expirePos] = readLength(data, pos);
+        const [, expirePos] = readLength(data, pos);
         pos = expirePos;
       }
 
@@ -1241,9 +1294,6 @@ function loadRDBFile() {
 
           pos += 4;
         }
-
-        // Value type
-        const valueType = data[pos];
 
         pos++;
 
@@ -1319,8 +1369,6 @@ if (isReplica) {
 
   masterSocket.on('data', (buffer: Buffer) => {
     if (!handshakeComplete) {
-      const input = buffer.toString();
-
       handshakeStep++;
 
       if (handshakeStep === 1) {
