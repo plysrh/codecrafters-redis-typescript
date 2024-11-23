@@ -47,6 +47,43 @@ function encodeGeohash(longitude: number, latitude: number): number {
   return geohash;
 }
 
+// Geohash decoding function
+function decodeGeohash(geohash: number): [number, number] {
+  let lonMin = -180.0;
+  let lonMax = 180.0;
+  let latMin = -85.05112878;
+  let latMax = 85.05112878;
+  let isEven = true;
+
+  for (let i = 51; i >= 0; i--) {
+    const bit = Math.floor(geohash / Math.pow(2, i)) % 2;
+
+    if (isEven) {
+      const mid = (lonMin + lonMax) / 2;
+
+      if (bit === 1) {
+        lonMin = mid;
+      } else {
+        lonMax = mid;
+      }
+    } else {
+      const mid = (latMin + latMax) / 2;
+
+      if (bit === 1) {
+        latMin = mid;
+      } else {
+        latMax = mid;
+      }
+    }
+    isEven = !isEven;
+  }
+
+  const longitude = (lonMin + lonMax) / 2;
+  const latitude = (latMin + latMax) / 2;
+
+  return [longitude, latitude];
+}
+
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
 const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
 const transactions = new Map<net.Socket, boolean>();
@@ -1206,9 +1243,13 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         for (let i = 0; i < numMembers; i++) {
           const memberIndex = 6 + i * 2;
           const member = lines[memberIndex];
+          const memberItem = sortedSet?.find(item => item.member === member);
 
-          if (sortedSet && sortedSet.find(item => item.member === member)) {
-            response += "*2\r\n$1\r\n0\r\n$1\r\n0\r\n";
+          if (memberItem) {
+            const [longitude, latitude] = decodeGeohash(memberItem.score);
+            const lonStr = longitude.toString();
+            const latStr = latitude.toString();
+            response += `*2\r\n$${lonStr.length}\r\n${lonStr}\r\n$${latStr.length}\r\n${latStr}\r\n`;
           } else {
             response += "*-1\r\n";
           }
