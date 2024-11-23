@@ -70,11 +70,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
     if (input.startsWith("*")) {
       const lines = input.split("\r\n");
 
-      // Check if connection is in transaction and queue commands (except MULTI and EXEC)
+      // Check if connection is in transaction and queue commands (except MULTI, EXEC, and DISCARD)
       if (transactions.has(connection)) {
         const command = lines[2];
 
-        if (command !== "MULTI" && command !== "EXEC") {
+        if (command !== "MULTI" && command !== "EXEC" && command !== "DISCARD") {
           if (!queuedCommands.has(connection)) {
             queuedCommands.set(connection, []);
           }
@@ -138,7 +138,6 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         const finalLength = list.length;
-
         // Check for blocked clients
         const blocked = blockedClients.get(key);
 
@@ -177,7 +176,6 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         const finalLength = list.length;
-
         // Check for blocked clients
         const blocked = blockedClients.get(key);
 
@@ -215,17 +213,21 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           }
 
           let timeout: NodeJS.Timeout | undefined;
+
           if (timeoutSeconds > 0) {
             timeout = setTimeout(() => {
               const blocked = blockedClients.get(key);
 
               if (blocked) {
                 const index = blocked.findIndex(client => client.socket === connection);
+
                 if (index !== -1) {
                   blocked.splice(index, 1);
+
                   if (blocked.length === 0) {
                     blockedClients.delete(key);
                   }
+
                   connection.write("*-1\r\n");
                 }
               }
@@ -525,11 +527,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         let blockTimeout = 0;
 
         if (hasBlock) {
-          blockTimeout = parseInt(lines[6]);
+          blockTimeout = parseInt(lines[6], 10);
         }
 
         // Parse multiple streams: XREAD [BLOCK timeout] STREAMS key1 key2 ... id1 id2 ...
-        const totalArgs = parseInt(lines[0].substring(1));
+        const totalArgs = parseInt(lines[0].substring(1), 10);
         const baseArgs = hasBlock ? 4 : 2; // XREAD [BLOCK timeout] STREAMS
         const numStreams = (totalArgs - baseArgs) / 2;
         const startIndex = streamsIndex + 2; // Start after "streams"
@@ -704,6 +706,17 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
           return connection.write(response);
         } else {
           return connection.write("-ERR EXEC without MULTI\r\n");
+        }
+      }
+
+      if (lines.length >= 3 && lines[1] === "$7" && lines[2] === "DISCARD") {
+        if (transactions.has(connection)) {
+          transactions.delete(connection);
+          queuedCommands.delete(connection);
+
+          return connection.write("+OK\r\n");
+        } else {
+          return connection.write("-ERR DISCARD without MULTI\r\n");
         }
       }
 
