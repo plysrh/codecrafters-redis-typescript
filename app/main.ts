@@ -84,6 +84,22 @@ function decodeGeohash(geohash: number): [number, number] {
   return [longitude, latitude];
 }
 
+// Haversine formula to calculate distance between two coordinates
+function calculateDistance(lon1: number, lat1: number, lon2: number, lat2: number): number {
+  const EARTH_RADIUS = 6372797.560856;
+  const lat1Rad = lat1 * Math.PI / 180;
+  const lat2Rad = lat2 * Math.PI / 180;
+  const deltaLatRad = (lat2 - lat1) * Math.PI / 180;
+  const deltaLonRad = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(deltaLatRad / 2) * Math.sin(deltaLatRad / 2) +
+            Math.cos(lat1Rad) * Math.cos(lat2Rad) *
+            Math.sin(deltaLonRad / 2) * Math.sin(deltaLonRad / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return EARTH_RADIUS * c;
+}
+
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
 const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
 const transactions = new Map<net.Socket, boolean>();
@@ -1256,6 +1272,31 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         return connection.write(response);
+      }
+
+      if (lines.length >= 8 && lines[1] === "$7" && lines[2] === "GEODIST") {
+        const key = lines[4];
+        const member1 = lines[6];
+        const member2 = lines[8];
+        const sortedSet = sortedSets.get(key);
+
+        if (!sortedSet) {
+          return connection.write("$-1\r\n");
+        }
+
+        const memberItem1 = sortedSet.find(item => item.member === member1);
+        const memberItem2 = sortedSet.find(item => item.member === member2);
+
+        if (!memberItem1 || !memberItem2) {
+          return connection.write("$-1\r\n");
+        }
+
+        const [lon1, lat1] = decodeGeohash(memberItem1.score);
+        const [lon2, lat2] = decodeGeohash(memberItem2.score);
+        const distance = calculateDistance(lon1, lat1, lon2, lat2);
+        const distanceStr = distance.toString();
+
+        return connection.write(`$${distanceStr.length}\r\n${distanceStr}\r\n`);
       }
     }
 
