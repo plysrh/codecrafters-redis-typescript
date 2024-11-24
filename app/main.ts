@@ -93,8 +93,8 @@ function calculateDistance(lon1: number, lat1: number, lon2: number, lat2: numbe
   const deltaLonRad = (lon2 - lon1) * Math.PI / 180;
 
   const a = Math.sin(deltaLatRad / 2) * Math.sin(deltaLatRad / 2) +
-            Math.cos(lat1Rad) * Math.cos(lat2Rad) *
-            Math.sin(deltaLonRad / 2) * Math.sin(deltaLonRad / 2);
+    Math.cos(lat1Rad) * Math.cos(lat2Rad) *
+    Math.sin(deltaLonRad / 2) * Math.sin(deltaLonRad / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return EARTH_RADIUS * c;
@@ -1297,6 +1297,37 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const distanceStr = distance.toString();
 
         return connection.write(`$${distanceStr.length}\r\n${distanceStr}\r\n`);
+      }
+
+      if (lines.length >= 14 && lines[1] === "$9" && lines[2] === "GEOSEARCH") {
+        const key = lines[4];
+        const longitude = parseFloat(lines[8]);
+        const latitude = parseFloat(lines[10]);
+        const radius = parseFloat(lines[14]);
+        const sortedSet = sortedSets.get(key);
+
+        if (!sortedSet) {
+          return connection.write("*0\r\n");
+        }
+
+        const matchingMembers = [];
+
+        for (const item of sortedSet) {
+          const [itemLon, itemLat] = decodeGeohash(item.score);
+          const distance = calculateDistance(longitude, latitude, itemLon, itemLat);
+
+          if (distance <= radius) {
+            matchingMembers.push(item.member);
+          }
+        }
+
+        let response = `*${matchingMembers.length}\r\n`;
+
+        for (const member of matchingMembers) {
+          response += `$${member.length}\r\n${member}\r\n`;
+        }
+
+        return connection.write(response);
       }
     }
 
