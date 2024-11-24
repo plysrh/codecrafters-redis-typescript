@@ -720,6 +720,16 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
       }
 
+      if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "INFO") {
+        const section = lines[4];
+
+        if (section === "replication") {
+          const response = "role:master";
+
+          return connection.write(`$${response.length}\r\n${response}\r\n`);
+        }
+      }
+
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "TYPE") {
         const key = lines[4];
         // Check if key exists in string store
