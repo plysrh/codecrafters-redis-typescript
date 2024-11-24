@@ -748,4 +748,16 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
   });
 });
 
-server.listen(6379, "127.0.0.1");
+// Parse command line arguments for port
+let port = 6379; // default port
+const args = process.argv.slice(2);
+
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--port' && i + 1 < args.length) {
+    port = parseInt(args[i + 1], 10);
+
+    break;
+  }
+}
+
+server.listen(port, "127.0.0.1");
