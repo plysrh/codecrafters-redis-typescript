@@ -724,7 +724,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const section = lines[4];
 
         if (section === "replication") {
-          const response = isReplica ? "role:slave" : "role:master";
+          let response = isReplica ? "role:slave" : "role:master";
+          
+          if (!isReplica) {
+            response += "\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\nmaster_repl_offset:0";
+          }
 
           return connection.write(`$${response.length}\r\n${response}\r\n`);
         }
