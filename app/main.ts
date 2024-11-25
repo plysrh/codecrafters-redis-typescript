@@ -724,7 +724,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const section = lines[4];
 
         if (section === "replication") {
-          const response = "role:master";
+          const response = isReplica ? "role:slave" : "role:master";
 
           return connection.write(`$${response.length}\r\n${response}\r\n`);
         }
@@ -758,15 +758,16 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
   });
 });
 
-// Parse command line arguments for port
+// Parse command line arguments for port and replicaof
 let port = 6379; // default port
+let isReplica = false;
 const args = process.argv.slice(2);
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--port' && i + 1 < args.length) {
     port = parseInt(args[i + 1], 10);
-
-    break;
+  } else if (args[i] === '--replicaof' && i + 1 < args.length) {
+    isReplica = true;
   }
 }
 
