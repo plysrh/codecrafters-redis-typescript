@@ -2,15 +2,28 @@ import net from "net";
 import fs from "fs";
 import path from "path";
 
-// You can use print statements as follows for debugging, they'll be visible when running tests.
+// Debug logging
 console.log("Logs from your program will appear here!");
 
+// Key-value store for strings with optional expiry
 const store = new Map<string, { value: string; expiry?: number }>();
+// Lists storage - each key maps to an array of strings
 const lists = new Map<string, string[]>();
+// Streams storage - each key maps to an array of stream entries
 const streams = new Map<string, { id: string; fields: Record<string, string> }[]>();
+// Sorted sets storage - each key maps to an array of member-score pairs
 const sortedSets = new Map<string, { member: string; score: number }[]>();
 
-// Geohash encoding function
+/**
+ * Encodes longitude and latitude coordinates into a geohash using interleaved bits
+ *
+ * The algorithm alternates between longitude and latitude bits, creating a single
+ * numeric value that preserves spatial locality. Uses Web Mercator projection limits.
+ *
+ * @param longitude - Longitude coordinate (-180 to 180 degrees)
+ * @param latitude - Latitude coordinate (-85.05112878 to 85.05112878 degrees)
+ * @returns Geohash as a 52-bit integer
+ */
 function encodeGeohash(longitude: number, latitude: number): number {
   let lonMin = -180.0;
   let lonMax = 180.0;
@@ -47,7 +60,15 @@ function encodeGeohash(longitude: number, latitude: number): number {
   return geohash;
 }
 
-// Geohash decoding function
+/**
+ * Decodes a geohash back to longitude and latitude coordinates
+ *
+ * Reverses the encoding process by extracting interleaved bits and
+ * reconstructing the coordinate ranges.
+ *
+ * @param geohash - Geohash score to decode
+ * @returns Tuple of coordinates [longitude, latitude]
+ */
 function decodeGeohash(geohash: number): [number, number] {
   let lonMin = -180.0;
   let lonMax = 180.0;
@@ -84,8 +105,20 @@ function decodeGeohash(geohash: number): [number, number] {
   return [longitude, latitude];
 }
 
-// Haversine formula to calculate distance between two coordinates
+/**
+ * Calculates the great-circle distance between two points on Earth using Haversine formula
+ *
+ * The Haversine formula determines the shortest distance over the earth's surface,
+ * giving an 'as-the-crow-flies' distance between the points.
+ *
+ * @param lon1 - First point longitude in degrees
+ * @param lat1 - First point latitude in degrees
+ * @param lon2 - Second point longitude in degrees
+ * @param lat2 - Second point latitude in degrees
+ * @returns Distance in meters
+ */
 function calculateDistance(lon1: number, lat1: number, lon2: number, lat2: number): number {
+  /** Earth's radius in meters (Redis standard value) */
   const EARTH_RADIUS = 6372797.560856;
   const lat1Rad = lat1 * Math.PI / 180;
   const lat2Rad = lat2 * Math.PI / 180;
@@ -99,17 +132,32 @@ function calculateDistance(lon1: number, lat1: number, lon2: number, lat2: numbe
   return EARTH_RADIUS * c;
 }
 
+// Clients blocked on BLPOP operations, keyed by list name
 const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Timeout }[]>();
+// Clients blocked on XREAD operations, keyed by stream name
 const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
+// Active transactions - tracks which connections are in MULTI mode
 const transactions = new Map<net.Socket, boolean>();
+// Queued commands for each transaction
 const queuedCommands = new Map<net.Socket, string[]>();
+// Connected replica servers
 const replicas = new Set<net.Socket>();
+// Clients waiting for replication acknowledgments
 const waitingClients = new Map<net.Socket, { numReplicas: number; timeout: NodeJS.Timeout; ackCount: number; targetOffset: number }>();
+// Pub/Sub subscribers by connection
 const subscribers = new Map<net.Socket, Set<string>>();
+// Connections in subscribed mode (limited command set)
 const subscribedMode = new Set<net.Socket>();
+// Current replication offset for master
 let masterReplicationOffset = 0;
 
-// Function to execute a single command and return its response
+/**
+ * Executes a single Redis command and returns the response
+ * Used for transaction execution (EXEC command)
+ *
+ * @param commandInput - Raw RESP command string
+ * @returns RESP-formatted response string
+ */
 function executeCommand(commandInput: string): string {
   const lines = commandInput.split("\r\n");
 
@@ -159,7 +207,10 @@ function executeCommand(commandInput: string): string {
   return "+OK\r\n";
 }
 
-// Uncomment this block to pass the first stage
+/**
+ * Main Redis server that handles client connections and command processing
+ * Supports the Redis Serialization Protocol (RESP)
+ */
 const server: net.Server = net.createServer((connection: net.Socket) => {
   connection.on("close", () => {
     replicas.delete(connection);
@@ -1200,6 +1251,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write(":1\r\n");
       }
 
+      /**
+       * GEOADD key longitude latitude member
+       * Adds a location to a geospatial index (stored as sorted set)
+       * Validates coordinates and encodes as geohash for efficient storage
+       */
       if (lines.length >= 10 && lines[1] === "$6" && lines[2] === "GEOADD") {
         const key = lines[4];
         const longitude = parseFloat(lines[6]);
@@ -1247,6 +1303,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
       }
 
+      /**
+       * GEOPOS key member [member ...]
+       * Returns longitude and latitude of given members
+       * Decodes stored geohash back to coordinates
+       */
       if (lines.length >= 4 && lines[1] === "$6" && lines[2] === "GEOPOS") {
         const key = lines[4];
         const sortedSet = sortedSets.get(key);
@@ -1273,6 +1334,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write(response);
       }
 
+      /**
+       * GEODIST key member1 member2 [unit]
+       * Returns distance between two members using Haversine formula
+       * Calculates great-circle distance in meters
+       */
       if (lines.length >= 8 && lines[1] === "$7" && lines[2] === "GEODIST") {
         const key = lines[4];
         const member1 = lines[6];
@@ -1298,6 +1364,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write(`$${distanceStr.length}\r\n${distanceStr}\r\n`);
       }
 
+      /**
+       * GEOSEARCH key FROMLONLAT longitude latitude BYRADIUS radius unit
+       * Searches for members within a radius from a point
+       * Uses distance calculation to filter nearby locations
+       */
       if (lines.length >= 14 && lines[1] === "$9" && lines[2] === "GEOSEARCH") {
         const key = lines[4];
         const longitude = parseFloat(lines[8]);
@@ -1334,7 +1405,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
   });
 });
 
-// Parse command line arguments
+/**
+ * Parse command line arguments for server configuration
+ * Supports: --port, --replicaof, --dir, --dbfilename
+ */
 const args = process.argv.slice(2);
 let port = 6379; // default port
 let isReplica = false;
@@ -1359,7 +1433,11 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-// Load RDB file on startup
+/**
+ * Loads Redis Database (RDB) file on startup
+ * Parses the binary format and restores key-value pairs to memory
+ * Supports different encoding types and metadata
+ */
 function loadRDBFile() {
   const rdbPath = path.join(dir, dbfilename);
 
@@ -1452,6 +1530,14 @@ function loadRDBFile() {
   }
 }
 
+/**
+ * Reads length encoding from RDB file
+ * Handles different encoding formats (6-bit, 14-bit, 32-bit)
+ * 
+ * @param data - RDB file buffer
+ * @param pos - Current position in buffer
+ * @returns Tuple of [length, new_position]
+ */
 function readLength(data: Buffer, pos: number): [number, number] {
   const firstByte = data[pos];
   const type = (firstByte & 0xC0) >> 6;
@@ -1472,6 +1558,14 @@ function readLength(data: Buffer, pos: number): [number, number] {
   }
 }
 
+/**
+ * Reads string from RDB file with length encoding
+ * Handles special integer encodings (8-bit, 16-bit, 32-bit)
+ * 
+ * @param data - RDB file buffer
+ * @param pos - Current position in buffer
+ * @returns Tuple of [string_value, new_position]
+ */
 function readString(data: Buffer, pos: number): [string, number] {
   const [length, newPos] = readLength(data, pos);
   const firstByte = data[pos];
@@ -1500,7 +1594,11 @@ function readString(data: Buffer, pos: number): [string, number] {
 loadRDBFile();
 server.listen(port, "127.0.0.1");
 
-// If replica, connect to master and start handshake
+/**
+ * Replica mode: Connect to master and perform replication handshake
+ * Handles PING, REPLCONF, PSYNC commands and processes propagated commands
+ * Maintains offset synchronization for data consistency
+ */
 if (isReplica) {
   const masterSocket = net.createConnection(masterPort, masterHost);
   let handshakeStep = 0;
