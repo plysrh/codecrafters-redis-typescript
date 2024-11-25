@@ -1,6 +1,6 @@
-import * as net from "net";
-import * as fs from "fs";
-import * as path from "path";
+import net from "net";
+import fs from "fs";
+import path from "path";
 
 // You can use print statements as follows for debugging, they'll be visible when running tests.
 console.log("Logs from your program will appear here!");
@@ -91,7 +91,6 @@ function calculateDistance(lon1: number, lat1: number, lon2: number, lat2: numbe
   const lat2Rad = lat2 * Math.PI / 180;
   const deltaLatRad = (lat2 - lat1) * Math.PI / 180;
   const deltaLonRad = (lon2 - lon1) * Math.PI / 180;
-
   const a = Math.sin(deltaLatRad / 2) * Math.sin(deltaLatRad / 2) +
     Math.cos(lat1Rad) * Math.cos(lat2Rad) *
     Math.sin(deltaLonRad / 2) * Math.sin(deltaLonRad / 2);
@@ -611,7 +610,6 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         const start = parseId(startId, true);
         const end = parseId(endId, false);
-
         // Filter entries within range
         const matchingEntries = stream.filter(entry => {
           const [entryMsStr, entrySeqStr] = entry.id.split('-');
@@ -1265,6 +1263,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             const [longitude, latitude] = decodeGeohash(memberItem.score);
             const lonStr = longitude.toString();
             const latStr = latitude.toString();
+
             response += `*2\r\n$${lonStr.length}\r\n${lonStr}\r\n$${latStr.length}\r\n${latStr}\r\n`;
           } else {
             response += "*-1\r\n";
@@ -1396,6 +1395,7 @@ function loadRDBFile() {
       pos++;
 
       const [, dbPos] = readLength(data, pos);
+
       pos = dbPos;
 
       if (pos < data.length && data[pos] === 0xFB) {
@@ -1403,8 +1403,11 @@ function loadRDBFile() {
         pos++;
 
         const [, hashPos] = readLength(data, pos);
+
         pos = hashPos;
+
         const [, expirePos] = readLength(data, pos);
+
         pos = expirePos;
       }
 
@@ -1433,9 +1436,12 @@ function loadRDBFile() {
 
         // Key
         const [key, keyPos] = readString(data, pos);
+
         pos = keyPos;
+
         // Value
         const [value, valuePos] = readString(data, pos);
+
         pos = valuePos;
 
         store.set(key, { value, expiry: expiry ? Number(expiry) : undefined });
@@ -1541,6 +1547,7 @@ if (isReplica) {
 
           // Skip RDB header + RDB data using buffer operations
           const skipBytes = headerLength + rdbLength;
+
           remainingBuffer = remainingBuffer.subarray(skipBytes);
           remaining = remainingBuffer.toString();
 
@@ -1579,6 +1586,7 @@ if (isReplica) {
           }
 
           const argLength = parseInt(lengthMatch[1], 10);
+
           pos += lengthMatch[0].length + argLength + 2;
         }
 
@@ -1597,6 +1605,7 @@ if (isReplica) {
           console.log(`Setting ${key} = ${value}`);
           store.set(key, { value });
           console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
+
           replicationOffset += currentCommand.length;
         } else if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "PING") {
           console.log(`Adding ${currentCommand.length} bytes to offset (was ${replicationOffset})`);
