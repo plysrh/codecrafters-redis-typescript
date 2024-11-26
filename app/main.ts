@@ -785,7 +785,20 @@ server.listen(port, "127.0.0.1");
 
 // If replica, connect to master and start handshake
 if (isReplica) {
+  let handshakeStep = 0;
   const masterSocket = net.createConnection(masterPort, masterHost);
+
+  masterSocket.on('data', () => {
+    handshakeStep++;
+
+    if (handshakeStep === 1) {
+      // Send REPLCONF listening-port
+      masterSocket.write(`*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$${port.toString().length}\r\n${port}\r\n`);
+    } else if (handshakeStep === 2) {
+      // Send REPLCONF capa psync2
+      masterSocket.write("*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n");
+    }
+  });
 
   masterSocket.write("*1\r\n$4\r\nPING\r\n");
 }
