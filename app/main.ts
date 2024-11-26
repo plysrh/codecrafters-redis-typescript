@@ -725,7 +725,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         if (section === "replication") {
           let response = isReplica ? "role:slave" : "role:master";
-          
+
           if (!isReplica) {
             response += "\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\nmaster_repl_offset:0";
           }
@@ -765,14 +765,27 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 // Parse command line arguments for port and replicaof
 let port = 6379; // default port
 let isReplica = false;
+let masterHost = '';
+let masterPort = 0;
 const args = process.argv.slice(2);
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--port' && i + 1 < args.length) {
     port = parseInt(args[i + 1], 10);
   } else if (args[i] === '--replicaof' && i + 1 < args.length) {
+    const masterInfo = args[i + 1].split(' ');
+
     isReplica = true;
+    masterHost = masterInfo[0];
+    masterPort = parseInt(masterInfo[1], 10);
   }
 }
 
 server.listen(port, "127.0.0.1");
+
+// If replica, connect to master and start handshake
+if (isReplica) {
+  const masterSocket = net.createConnection(masterPort, masterHost);
+
+  masterSocket.write("*1\r\n$4\r\nPING\r\n");
+}
