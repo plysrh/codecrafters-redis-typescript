@@ -720,6 +720,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
       }
 
+      if (lines.length >= 6 && lines[1] === "$8" && lines[2] === "REPLCONF") {
+        return connection.write("+OK\r\n");
+      }
+
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "INFO") {
         const section = lines[4];
 
