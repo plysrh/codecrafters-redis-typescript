@@ -724,6 +724,10 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         return connection.write("+OK\r\n");
       }
 
+      if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "PSYNC") {
+        return connection.write("+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n");
+      }
+
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "INFO") {
         const section = lines[4];
 
