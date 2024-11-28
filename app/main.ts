@@ -725,7 +725,14 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       }
 
       if (lines.length >= 6 && lines[1] === "$5" && lines[2] === "PSYNC") {
-        return connection.write("+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n");
+        connection.write("+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n");
+
+        // Send empty RDB file
+        const emptyRdb = Buffer.from("UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==", "base64");
+
+        connection.write(`$${emptyRdb.length}\r\n`);
+
+        return connection.write(emptyRdb);
       }
 
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "INFO") {
