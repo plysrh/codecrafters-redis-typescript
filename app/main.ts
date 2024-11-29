@@ -427,7 +427,6 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         if (blockedXRead && blockedXRead.length > 0) {
           const clientInfo = blockedXRead[0]; // Check first client
-
           // Check if new entry ID is greater than client's start ID
           const [clientMsStr, clientSeqStr] = clientInfo.startId.split('-');
           const clientMs = parseInt(clientMsStr, 10);
@@ -599,7 +598,6 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
             // Block the client for the first stream
             const firstKey = lines[startIndex];
             const firstStartId = lines[startIndex + numStreams * 2];
-
             // Convert $ to actual ID for blocking
             let actualStartId = firstStartId;
 
@@ -712,6 +710,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
       if (lines.length >= 3 && lines[1] === "$5" && lines[2] === "MULTI") {
         transactions.set(connection, true);
         queuedCommands.set(connection, []);
+
         return connection.write("+OK\r\n");
       }
 
@@ -762,6 +761,7 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
         // Register as replica after handshake completion
         replicas.add(connection);
+
         return;
       }
 
@@ -808,11 +808,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 });
 
 // Parse command line arguments for port and replicaof
+const args = process.argv.slice(2);
 let port = 6379; // default port
 let isReplica = false;
 let masterHost = '';
 let masterPort = 0;
-const args = process.argv.slice(2);
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--port' && i + 1 < args.length) {
@@ -830,21 +830,57 @@ server.listen(port, "127.0.0.1");
 
 // If replica, connect to master and start handshake
 if (isReplica) {
-  let handshakeStep = 0;
   const masterSocket = net.createConnection(masterPort, masterHost);
+  let handshakeStep = 0;
+  let handshakeComplete = false;
 
-  masterSocket.on('data', () => {
-    handshakeStep++;
+  masterSocket.on('data', (buffer: Buffer) => {
+    const input = buffer.toString();
 
-    if (handshakeStep === 1) {
-      // Send REPLCONF listening-port
-      masterSocket.write(`*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$${port.toString().length}\r\n${port}\r\n`);
-    } else if (handshakeStep === 2) {
-      // Send REPLCONF capa psync2
-      masterSocket.write("*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n");
-    } else if (handshakeStep === 3) {
-      // Send PSYNC ? -1
-      masterSocket.write("*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n");
+    if (!handshakeComplete) {
+      handshakeStep++;
+
+      if (handshakeStep === 1) {
+        // Send REPLCONF listening-port
+        masterSocket.write(`*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$${port.toString().length}\r\n${port}\r\n`);
+      } else if (handshakeStep === 2) {
+        // Send REPLCONF capa psync2
+        masterSocket.write("*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n");
+      } else if (handshakeStep === 3) {
+        // Send PSYNC ? -1
+        masterSocket.write("*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n");
+      } else if (handshakeStep === 4) {
+        // RDB file received, handshake complete
+        handshakeComplete = true;
+      }
+    } else {
+      // Process propagated commands silently
+      console.log("Replica received:", JSON.stringify(input));
+
+      let remaining = input;
+
+      while (remaining.startsWith("*")) {
+        const lines = remaining.split("\r\n");
+
+        console.log("Processing lines:", lines.slice(0, 8));
+
+        if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
+          const key = lines[4];
+          const value = lines[6];
+
+          console.log(`Setting ${key} = ${value}`);
+
+          store.set(key, { value });
+
+          // Remove processed command (7 lines: *3, $3, SET, $3, key, $3, value)
+          remaining = lines.slice(7).join("\r\n");
+          console.log("Remaining:", JSON.stringify(remaining));
+        } else {
+          console.log("Breaking - no more SET commands");
+          break;
+        }
+      }
+      console.log("Store contents:", Array.from(store.entries()));
     }
   });
 
