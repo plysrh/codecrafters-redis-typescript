@@ -10,6 +10,7 @@ const blockedClients = new Map<string, { socket: net.Socket; timeout?: NodeJS.Ti
 const blockedXReadClients = new Map<string, { socket: net.Socket; startId: string; timeout?: NodeJS.Timeout }[]>();
 const transactions = new Map<net.Socket, boolean>();
 const queuedCommands = new Map<net.Socket, string[]>();
+const replicas = new Set<net.Socket>();
 
 // Function to execute a single command and return its response
 function executeCommand(commandInput: string): string {
@@ -63,6 +64,10 @@ function executeCommand(commandInput: string): string {
 
 // Uncomment this block to pass the first stage
 const server: net.Server = net.createServer((connection: net.Socket) => {
+  connection.on("close", () => {
+    replicas.delete(connection);
+  });
+
   connection.on("data", (buffer: Buffer) => {
     const input = buffer.toString();
 
@@ -106,6 +111,13 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         }
 
         store.set(key, { value, expiry });
+
+        // Propagate to replicas if this is a master
+        if (!isReplica) {
+          for (const replica of replicas) {
+            replica.write(input);
+          }
+        }
 
         return connection.write("+OK\r\n");
       }
@@ -674,10 +686,24 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
           store.set(key, { value: newValue.toString(), expiry: entry.expiry });
 
+          // Propagate to replicas if this is a master
+          if (!isReplica) {
+            for (const replica of replicas) {
+              replica.write(input);
+            }
+          }
+
           return connection.write(`:${newValue}\r\n`);
         } else {
           // Key doesn't exist, set to 1
           store.set(key, { value: "1" });
+
+          // Propagate to replicas if this is a master
+          if (!isReplica) {
+            for (const replica of replicas) {
+              replica.write(input);
+            }
+          }
 
           return connection.write(":1\r\n");
         }
@@ -691,15 +717,16 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
 
       if (lines.length >= 3 && lines[1] === "$4" && lines[2] === "EXEC") {
         if (transactions.has(connection)) {
-          transactions.delete(connection);
-
           const commands = queuedCommands.get(connection) || [];
+
+          transactions.delete(connection);
           queuedCommands.delete(connection);
 
           let response = `*${commands.length}\r\n`;
 
           for (const command of commands) {
             const commandResponse = executeCommand(command);
+
             response += commandResponse;
           }
 
@@ -731,8 +758,11 @@ const server: net.Server = net.createServer((connection: net.Socket) => {
         const emptyRdb = Buffer.from("UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==", "base64");
 
         connection.write(`$${emptyRdb.length}\r\n`);
+        connection.write(emptyRdb);
 
-        return connection.write(emptyRdb);
+        // Register as replica after handshake completion
+        replicas.add(connection);
+        return;
       }
 
       if (lines.length >= 4 && lines[1] === "$4" && lines[2] === "INFO") {
