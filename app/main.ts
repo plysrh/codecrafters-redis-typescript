@@ -864,7 +864,12 @@ if (isReplica) {
 
         console.log("Processing lines:", lines.slice(0, 8));
 
-        if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
+        if (lines.length >= 6 && lines[1] === "$8" && lines[2].toLowerCase() === "replconf" && lines[4].toLowerCase() === "getack") {
+          // Respond to REPLCONF GETACK with REPLCONF ACK 0
+          masterSocket.write("*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n");
+
+          remaining = lines.slice(6).join("\r\n");
+        } else if (lines.length >= 6 && lines[1] === "$3" && lines[2] === "SET") {
           const key = lines[4];
           const value = lines[6];
 
@@ -876,7 +881,7 @@ if (isReplica) {
           remaining = lines.slice(7).join("\r\n");
           console.log("Remaining:", JSON.stringify(remaining));
         } else {
-          console.log("Breaking - no more SET commands");
+          console.log("Breaking - no more commands");
           break;
         }
       }
