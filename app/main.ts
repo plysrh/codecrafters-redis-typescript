@@ -859,6 +859,21 @@ if (isReplica) {
 
       let remaining = input;
 
+      // Skip RDB file data if present (starts with $)
+      if (remaining.startsWith("$")) {
+        const lines = remaining.split("\r\n");
+
+        if (lines.length >= 2) {
+          const rdbLength = parseInt(lines[0].substring(1), 10);
+          // Skip RDB header and data
+          const rdbData = lines[1];
+
+          if (rdbData.length >= rdbLength) {
+            remaining = rdbData.substring(rdbLength);
+          }
+        }
+      }
+
       while (remaining.startsWith("*")) {
         const lines = remaining.split("\r\n");
 
